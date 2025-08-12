@@ -3,10 +3,10 @@ declare(strict_types=1);
 session_start();
 
 $loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
-$pageTitle = $loggedIn ? 'Time Entries' : 'Timesheets';
+$pageTitle = 'Budget';
 ?>
 <!doctype html>
-<html lang="en" data-bs-theme="light">
+<html lang="en" data-bs-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -19,41 +19,38 @@ $pageTitle = $loggedIn ? 'Time Entries' : 'Timesheets';
     </style>
   </head>
   <body>
-    <nav class="navbar navbar-light bg-light border-bottom fixed-top">
+    <nav class="navbar navbar-dark bg-dark border-bottom fixed-top">
       <div class="container-fluid position-relative">
-        <button class="navbar-toggler me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
-          <span class="navbar-toggler-icon"></span>
-        </button>
+        <?php if ($loggedIn): ?>
+          <button class="navbar-toggler me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
+            <span class="navbar-toggler-icon"></span>
+          </button>
+        <?php endif; ?>
         <div class="navbar-center-title"><?= htmlspecialchars($pageTitle) ?></div>
         <div class="ms-auto d-flex align-items-center gap-2">
           <?php if ($loggedIn): ?>
             <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
             <a class="btn btn-outline-secondary btn-sm" href="#" role="button" aria-disabled="true">Logout</a>
-          <?php else: ?>
-            <a class="btn btn-outline-primary btn-sm" href="#">Help</a>
           <?php endif; ?>
         </div>
       </div>
     </nav>
-
-    <div class="offcanvas offcanvas-start" tabindex="-1" id="mainMenu" aria-labelledby="mainMenuLabel">
-      <div class="offcanvas-header">
-        <h5 class="offcanvas-title" id="mainMenuLabel">Menu</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-      </div>
-      <div class="offcanvas-body">
-        <ul class="list-unstyled mb-0">
-          <li><a class="link-body-emphasis d-block py-1" href="index.php">Home</a></li>
-          <?php if ($loggedIn): ?>
+    <?php if ($loggedIn): ?>
+      <div class="offcanvas offcanvas-start" tabindex="-1" id="mainMenu" aria-labelledby="mainMenuLabel">
+        <div class="offcanvas-header">
+          <h5 class="offcanvas-title" id="mainMenuLabel">Menu</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+          <ul class="list-unstyled mb-0">
+            <li><a class="link-body-emphasis d-block py-1" href="index.php">Home</a></li>
             <li><a class="link-body-emphasis d-block py-1" href="accounts.php">Accounts</a></li>
             <li><a class="link-body-emphasis d-block py-1" href="manage_projects.php">Manage Projects</a></li>
             <li><a class="link-body-emphasis d-block py-1" href="setup.php">Setup</a></li>
-          <?php else: ?>
-            <li class="text-body-secondary small py-1">Log in to see more</li>
-          <?php endif; ?>
-        </ul>
+          </ul>
+        </div>
       </div>
-    </div>
+    <?php endif; ?>
 
     <main class="container py-4">
       <?php if ($loggedIn): ?>
@@ -109,4 +106,3 @@ $pageTitle = $loggedIn ? 'Time Entries' : 'Timesheets';
     <?php endif; ?>
   </body>
   </html>
-
