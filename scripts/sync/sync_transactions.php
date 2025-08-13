@@ -22,13 +22,17 @@ function ensure_tables(PDO $pdo): void {
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS accounts (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            fm_pk VARCHAR(64) NOT NULL UNIQUE,
+            fm_pk VARCHAR(64) NULL,
             name VARCHAR(255) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_accounts_name (name),
             KEY idx_name (name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
     );
+    // Best-effort schema adjustments for existing installs
+    try { $pdo->exec("ALTER TABLE accounts MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) {}
+    try { $pdo->exec("ALTER TABLE accounts ADD UNIQUE KEY uniq_accounts_name (name)"); } catch (Throwable $e) {}
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS transactions (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -100,15 +104,14 @@ function http_get(string $url, string $user, string $pass): array {
     return $data;
 }
 
-function upsert_account(PDO $pdo, array $acct): int {
-    $fmPk = (string)($acct['PrimaryKey'] ?? '');
-    $name = (string)($acct['Account'] ?? '');
-    if ($fmPk === '') return 0;
-    $pdo->prepare('INSERT INTO accounts (fm_pk, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), updated_at = CURRENT_TIMESTAMP')
-        ->execute([$fmPk, $name]);
-    $stmt = $pdo->prepare('SELECT id FROM accounts WHERE fm_pk = ?');
-    $stmt->execute([$fmPk]);
-    return (int)$stmt->fetchColumn();
+function upsert_account_by_name(PDO $pdo, string $name, ?string $fmPk = null): int {
+    if ($name === '') return 0;
+    // Insert by unique name; update fm_pk if it later becomes known
+    $stmt = $pdo->prepare('INSERT INTO accounts (name, fm_pk) VALUES (?, ?) ON DUPLICATE KEY UPDATE fm_pk = COALESCE(VALUES(fm_pk), fm_pk), updated_at = CURRENT_TIMESTAMP');
+    $stmt->execute([$name, $fmPk]);
+    $get = $pdo->prepare('SELECT id FROM accounts WHERE name = ?');
+    $get->execute([$name]);
+    return (int)$get->fetchColumn();
 }
 
 function upsert_transaction(PDO $pdo, array $tx, ?string $accountPk, ?int $accountId): void {
@@ -176,18 +179,10 @@ function main(array $argv): void {
             if ($processed >= $limit) break;
             $txPk = (string)($tx['PrimaryKey'] ?? '');
             $acctPk = null; $acctId = null;
-            if ($txPk !== '') {
-                $acctUrl = $base . '/Transactions(' . rawurlencode("'{$txPk}'") . ')/' . rawurlencode('Accounts');
-                try {
-                    $acctResp = http_get($acctUrl, $user, $pass);
-                    $acctRows = $acctResp['value'] ?? [];
-                    if (is_array($acctRows) && !empty($acctRows)) {
-                        $acctPk = (string)($acctRows[0]['PrimaryKey'] ?? '');
-                        $acctId = upsert_account($pdo, $acctRows[0]);
-                    }
-                } catch (Throwable $e) {
-                    // proceed without FK if fails
-                }
+            // Use transaction's Account display text to normalize without extra OData calls
+            $acctName = isset($tx['Account']) ? (string)$tx['Account'] : '';
+            if ($acctName !== '') {
+                $acctId = upsert_account_by_name($pdo, $acctName, null);
             }
             upsert_transaction($pdo, $tx, $acctPk, $acctId);
             $processed++;
