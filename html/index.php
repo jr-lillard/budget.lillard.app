@@ -13,7 +13,6 @@ $pageTitle = 'Budget';
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <style>
-      .navbar-center-title { position: absolute; left: 50%; transform: translateX(-50%); }
       main { padding-top: 4.5rem; }
       #apiErrorDetails { white-space: pre-wrap; word-break: break-word; }
     </style>
@@ -26,7 +25,7 @@ $pageTitle = 'Budget';
             <span class="navbar-toggler-icon"></span>
           </button>
         <?php endif; ?>
-        <a class="navbar-brand navbar-center-title" href="#"><?= htmlspecialchars($pageTitle) ?></a>
+        <a class="navbar-brand position-absolute start-50 translate-middle-x" href="#"><?= htmlspecialchars($pageTitle) ?></a>
         <div class="ms-auto d-flex align-items-center gap-2">
           <?php if ($loggedIn): ?>
             <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
