@@ -102,6 +102,14 @@ function http_get(string $url, string $user, string $pass): array {
             if (is_array($data)) {
                 return $data;
             }
+            // Attempt to repair malformed numbers like -.88 (missing leading zero)
+            $repaired = preg_replace('/:\s*-\.(\d)/', ':-0.$1', $body);
+            if (is_string($repaired)) {
+                $data2 = json_decode($repaired, true);
+                if (is_array($data2)) {
+                    return $data2;
+                }
+            }
             $lastErr = 'Invalid JSON';
         } else {
             $lastErr = 'HTTP ' . $status . ' ' . $err;
