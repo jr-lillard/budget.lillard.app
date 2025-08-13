@@ -13,8 +13,6 @@ $pageTitle = 'Budget';
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <style>
-      main { padding-top: 4.5rem; }
-      #apiErrorDetails { white-space: pre-wrap; word-break: break-word; }
     </style>
   </head>
   <body>
@@ -51,7 +49,7 @@ $pageTitle = 'Budget';
       </div>
     <?php endif; ?>
 
-    <main class="container py-4">
+    <main class="container py-4 pt-5 mt-2">
       <?php if ($loggedIn): ?>
         <div class="alert alert-info" role="alert">Welcome, <?= htmlspecialchars((string)$_SESSION['username']) ?>.</div>
         <p class="text-body-secondary">This is the Time Entries view. Build out your UI here.</p>
@@ -89,7 +87,7 @@ $pageTitle = 'Budget';
             </div>
             <div class="modal-body">
               <div id="apiErrorSummary" class="mb-2"></div>
-              <pre class="small bg-light p-2 rounded" id="apiErrorDetails"></pre>
+              <pre class="small bg-body-tertiary p-2 rounded overflow-auto" id="apiErrorDetails"></pre>
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
