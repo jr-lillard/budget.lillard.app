@@ -54,10 +54,10 @@ $pageTitle = 'Budget';
         <div class="alert alert-info" role="alert">Welcome, <?= htmlspecialchars((string)$_SESSION['username']) ?>.</div>
         <p class="text-body-secondary">This is the Time Entries view. Build out your UI here.</p>
       <?php else: ?>
-        <div class="row justify-content-center">
+        <div class="row justify-content-center mt-4">
           <div class="col-12 col-sm-10 col-md-8 col-lg-6">
             <div class="card shadow-sm">
-              <div class="card-body">
+              <div class="card-body p-4">
                 <h1 class="h4 mb-3">Sign in</h1>
                 <form method="post" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
                   <div class="mb-3">
