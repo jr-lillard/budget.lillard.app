@@ -43,9 +43,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     <nav class="navbar bg-body-tertiary sticky-top">
       <div class="container-fluid position-relative">
         <?php if ($loggedIn): ?>
-          <button class="navbar-toggler position-absolute start-0 top-50 translate-middle-y" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
-            <span class="navbar-toggler-icon"></span>
-          </button>
           <a class="navbar-brand mx-auto" href="#"><?= htmlspecialchars($pageTitle) ?></a>
           <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
             <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
@@ -56,27 +53,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         <?php endif; ?>
       </div>
     </nav>
-    <?php if ($loggedIn): ?>
-      <div class="offcanvas offcanvas-start" tabindex="-1" id="mainMenu" aria-labelledby="mainMenuLabel">
-        <div class="offcanvas-header">
-          <h5 class="offcanvas-title" id="mainMenuLabel">Menu</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-        </div>
-        <div class="offcanvas-body">
-          <ul class="list-unstyled mb-0">
-            <li><a class="link-body-emphasis d-block py-1" href="index.php">Home</a></li>
-            <li><a class="link-body-emphasis d-block py-1" href="accounts.php">Accounts</a></li>
-            <li><a class="link-body-emphasis d-block py-1" href="manage_projects.php">Manage Projects</a></li>
-            <li><a class="link-body-emphasis d-block py-1" href="setup.php">Setup</a></li>
-          </ul>
-        </div>
-      </div>
-    <?php endif; ?>
+    <?php /* Offcanvas menu removed per request */ ?>
 
     <main>
       <?php if ($loggedIn): ?>
-        <div class="alert alert-info" role="alert">Welcome, <?= htmlspecialchars((string)$_SESSION['username']) ?>.</div>
-        <p class="text-body-secondary">This is the Time Entries view. Build out your UI here.</p>
+        <div class="container mt-5"></div>
       <?php else: ?>
         <div class="container mt-5 mx-auto" style="max-width: 420px;">
           <?php if ($loginError !== ''): ?>
