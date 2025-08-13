@@ -16,7 +16,7 @@ $pageTitle = 'Budget';
     </style>
   </head>
   <body>
-    <nav class="navbar navbar-dark bg-dark border-bottom fixed-top">
+    <nav class="navbar navbar-dark bg-dark border-bottom fixed-top py-2">
       <div class="container-fluid position-relative">
         <?php if ($loggedIn): ?>
           <button class="navbar-toggler me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
