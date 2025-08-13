@@ -159,7 +159,9 @@ function main(array $argv): void {
     $pageSize = isset($argv[3]) ? max(1, (int)$argv[3]) : 1; // OData $top per page
 
     $next = state_get($pdo, 'tx.next');
-    $url = $next ?: ($base . '/Transactions?$top=' . $pageSize);
+    $skipState = state_get($pdo, 'tx.skip');
+    $skip = $skipState !== null ? max(0, (int)$skipState) : 0;
+    $url = $next ?: ($base . '/Transactions?$top=' . $pageSize . ($skip > 0 ? ('&$skip=' . $skip) : ''));
     $processed = 0;
 
     while ($processed < $limit) {
@@ -193,13 +195,24 @@ function main(array $argv): void {
         }
 
         $nextLink = $page['@nextLink'] ?? $page['@odata.nextLink'] ?? null;
-        if (!$nextLink) {
+        if ($nextLink) {
+            state_set($pdo, 'tx.skip', null);
+            state_set($pdo, 'tx.next', (string)$nextLink);
+            $url = (string)$nextLink;
+        } else {
+            // Fallback pagination via $skip
+            $skip += count($values);
             state_set($pdo, 'tx.next', null);
-            echo "Processed {$processed} record(s). End of feed.\n";
-            break;
+            state_set($pdo, 'tx.skip', (string)$skip);
+            $url = $base . '/Transactions?$top=' . $pageSize . '&$skip=' . $skip;
+            // If fewer than requested returned, likely end-of-feed
+            if (count($values) < $pageSize) {
+                state_set($pdo, 'tx.next', null);
+                state_set($pdo, 'tx.skip', null);
+                echo "Processed {$processed} record(s). End of feed.\n";
+                break;
+            }
         }
-        state_set($pdo, 'tx.next', (string)$nextLink);
-        $url = (string)$nextLink;
     }
     echo "Processed {$processed} record(s).\n";
 }
