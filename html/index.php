@@ -12,23 +12,21 @@ $pageTitle = 'Budget';
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
-    <style>
-    </style>
   </head>
   <body>
-    <nav class="navbar navbar-dark bg-dark border-bottom fixed-top py-2">
-      <div class="container-fluid position-relative justify-content-center">
+    <nav class="navbar bg-body-tertiary sticky-top">
+      <div class="container-fluid position-relative">
         <?php if ($loggedIn): ?>
           <button class="navbar-toggler position-absolute start-0 top-50 translate-middle-y" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
             <span class="navbar-toggler-icon"></span>
           </button>
-        <?php endif; ?>
-        <a class="navbar-brand" href="#"><?= htmlspecialchars($pageTitle) ?></a>
-        <?php if ($loggedIn): ?>
+          <a class="navbar-brand mx-auto" href="#"><?= htmlspecialchars($pageTitle) ?></a>
           <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
             <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
             <a class="btn btn-outline-secondary btn-sm" href="#" role="button" aria-disabled="true">Logout</a>
           </div>
+        <?php else: ?>
+          <span class="navbar-brand mx-auto"><?= htmlspecialchars($pageTitle) ?></span>
         <?php endif; ?>
       </div>
     </nav>
@@ -49,30 +47,23 @@ $pageTitle = 'Budget';
       </div>
     <?php endif; ?>
 
-    <main class="container py-4 pt-5 mt-2">
+    <main>
       <?php if ($loggedIn): ?>
         <div class="alert alert-info" role="alert">Welcome, <?= htmlspecialchars((string)$_SESSION['username']) ?>.</div>
         <p class="text-body-secondary">This is the Time Entries view. Build out your UI here.</p>
       <?php else: ?>
-        <div class="row justify-content-center mt-4">
-          <div class="col-12 col-sm-10 col-md-8 col-lg-6">
-            <div class="card shadow-sm">
-              <div class="card-body p-4">
-                <h1 class="h4 mb-3">Sign in</h1>
-                <form method="post" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
-                  <div class="mb-3">
-                    <label for="username" class="form-label">Username</label>
-                    <input type="text" class="form-control" id="username" name="username" autocomplete="username" required>
-                  </div>
-                  <div class="mb-3">
-                    <label for="password" class="form-label">Password</label>
-                    <input type="password" class="form-control" id="password" name="password" autocomplete="current-password" required>
-                  </div>
-                  <button type="submit" class="btn btn-primary w-100">Sign in</button>
-                </form>
-              </div>
+        <div class="container mt-5 mx-auto" style="max-width: 420px;">
+          <form method="post" action="" id="loginForm">
+            <div class="mb-3">
+              <label for="username" class="form-label">Username</label>
+              <input type="text" id="username" name="username" class="form-control" autocomplete="username" required>
             </div>
-          </div>
+            <div class="mb-3">
+              <label for="password" class="form-label">Password</label>
+              <input type="password" id="password" name="password" class="form-control" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Log In</button>
+          </form>
         </div>
       <?php endif; ?>
     </main>
