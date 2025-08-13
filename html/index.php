@@ -1,9 +1,35 @@
 <?php
 declare(strict_types=1);
 session_start();
+require_once __DIR__ . '/../util.php';
 
-$loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
 $pageTitle = 'Budget';
+$loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
+$loginError = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
+    $username = trim((string)($_POST['username'] ?? ''));
+    $password = (string)($_POST['password'] ?? '');
+    if ($username !== '' && $password !== '') {
+        try {
+            $pdo = get_mysql_connection();
+            $stmt = $pdo->prepare('SELECT password_hash FROM users WHERE username = ?');
+            $stmt->execute([$username]);
+            $hash = $stmt->fetchColumn();
+            if ($hash && password_verify($password, (string)$hash)) {
+                $_SESSION['username'] = $username;
+                header('Location: ' . (string)($_SERVER['PHP_SELF'] ?? 'index.php'));
+                exit;
+            } else {
+                $loginError = 'Invalid username or password.';
+            }
+        } catch (Throwable $e) {
+            $loginError = 'Login error. Please try again later.';
+        }
+    } else {
+        $loginError = 'Please enter username and password.';
+    }
+}
 ?>
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
@@ -53,6 +79,9 @@ $pageTitle = 'Budget';
         <p class="text-body-secondary">This is the Time Entries view. Build out your UI here.</p>
       <?php else: ?>
         <div class="container mt-5 mx-auto" style="max-width: 420px;">
+          <?php if ($loginError !== ''): ?>
+            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($loginError) ?></div>
+          <?php endif; ?>
           <form method="post" action="" id="loginForm">
             <div class="mb-3">
               <label for="username" class="form-label">Username</label>
