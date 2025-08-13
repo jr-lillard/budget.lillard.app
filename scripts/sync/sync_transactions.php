@@ -121,8 +121,8 @@ function upsert_transaction(PDO $pdo, array $tx, ?string $accountPk, ?int $accou
     $posted = isset($tx['Posted']) ? (string)$tx['Posted'] : null;
     $category = isset($tx['Category']) ? (string)$tx['Category'] : null;
     $tags = isset($tx['Tags']) ? (string)$tx['Tags'] : null;
-    $createdSrc = isset($tx['CreationTimestamp']) ? str_replace('T', ' ', (string)$tx['CreationTimestamp']) : null;
-    $updatedSrc = isset($tx['ModificationTimestamp']) ? str_replace('T', ' ', (string)$tx['ModificationTimestamp']) : null;
+    $createdSrc = isset($tx['CreationTimestamp']) ? rtrim(str_replace('T', ' ', (string)$tx['CreationTimestamp']), 'Z') : null;
+    $updatedSrc = isset($tx['ModificationTimestamp']) ? rtrim(str_replace('T', ' ', (string)$tx['ModificationTimestamp']), 'Z') : null;
 
     $sql = "INSERT INTO transactions (fm_pk, account_pk, account_id, `date`, amount, description, check_no, posted, category, tags, created_at_source, updated_at_source)
             VALUES (:fm_pk, :account_pk, :account_id, :date, :amount, :description, :check_no, :posted, :category, :tags, :created_src, :updated_src)
@@ -204,4 +204,3 @@ function main(array $argv): void {
 }
 
 main($argv);
-
