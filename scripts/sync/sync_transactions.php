@@ -80,28 +80,36 @@ function state_set(PDO $pdo, string $k, ?string $v): void {
 }
 
 function http_get(string $url, string $user, string $pass): array {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_USERPWD => $user . ':' . $pass,
-        CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
-    ]);
-    $body = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    curl_close($ch);
-    if ($body === false || $status < 200 || $status >= 300) {
-        throw new RuntimeException('HTTP ' . $status . ' fetching ' . $url . ' err=' . $err);
+    $attempts = 0; $lastErr = '';
+    while ($attempts < 3) {
+        $attempts++;
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_USERPWD => $user . ':' . $pass,
+            CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        ]);
+        $body = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+        if ($body !== false && $status >= 200 && $status < 300) {
+            $data = json_decode($body, true);
+            if (is_array($data)) {
+                return $data;
+            }
+            $lastErr = 'Invalid JSON';
+        } else {
+            $lastErr = 'HTTP ' . $status . ' ' . $err;
+        }
+        // short backoff
+        usleep(250 * 1000);
     }
-    $data = json_decode($body, true);
-    if (!is_array($data)) {
-        throw new RuntimeException('Invalid JSON from ' . $url);
-    }
-    return $data;
+    throw new RuntimeException('HTTP fetch failed ' . $lastErr . ' for ' . $url);
 }
 
 function upsert_account_by_name(PDO $pdo, string $name, ?string $fmPk = null): int {
