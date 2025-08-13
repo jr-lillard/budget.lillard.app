@@ -155,10 +155,11 @@ function main(array $argv): void {
     $user = (string)$cfg['fms']['username'];
     $pass = (string)$cfg['fms']['password'];
     $limit = isset($argv[1]) ? max(1, (int)$argv[1]) : 50; // process up to N records per run
-    $sleepMs = isset($argv[2]) ? max(0, (int)$argv[2]) : 200; // throttle between requests
+    $sleepMs = isset($argv[2]) ? max(0, (int)$argv[2]) : 200; // throttle between requests (per record)
+    $pageSize = isset($argv[3]) ? max(1, (int)$argv[3]) : 1; // OData $top per page
 
     $next = state_get($pdo, 'tx.next');
-    $url = $next ?: ($base . '/Transactions?$top=1');
+    $url = $next ?: ($base . '/Transactions?$top=' . $pageSize);
     $processed = 0;
 
     while ($processed < $limit) {
@@ -169,28 +170,29 @@ function main(array $argv): void {
             echo "No more records.\n";
             break;
         }
-        $tx = $values[0];
-
-        $txPk = (string)($tx['PrimaryKey'] ?? '');
-        $acctPk = null; $acctId = null;
-        if ($txPk !== '') {
-            $acctUrl = $base . '/Transactions(' . rawurlencode("'{$txPk}'") . ')/' . rawurlencode('Accounts');
-            try {
-                $acctResp = http_get($acctUrl, $user, $pass);
-                $acctRows = $acctResp['value'] ?? [];
-                if (is_array($acctRows) && !empty($acctRows)) {
-                    $acctPk = (string)($acctRows[0]['PrimaryKey'] ?? '');
-                    $acctId = upsert_account($pdo, $acctRows[0]);
+        foreach ($values as $tx) {
+            if ($processed >= $limit) break;
+            $txPk = (string)($tx['PrimaryKey'] ?? '');
+            $acctPk = null; $acctId = null;
+            if ($txPk !== '') {
+                $acctUrl = $base . '/Transactions(' . rawurlencode("'{$txPk}'") . ')/' . rawurlencode('Accounts');
+                try {
+                    $acctResp = http_get($acctUrl, $user, $pass);
+                    $acctRows = $acctResp['value'] ?? [];
+                    if (is_array($acctRows) && !empty($acctRows)) {
+                        $acctPk = (string)($acctRows[0]['PrimaryKey'] ?? '');
+                        $acctId = upsert_account($pdo, $acctRows[0]);
+                    }
+                } catch (Throwable $e) {
+                    // proceed without FK if fails
                 }
-            } catch (Throwable $e) {
-                // proceed without FK if fails
             }
+            upsert_transaction($pdo, $tx, $acctPk, $acctId);
+            $processed++;
+            if ($sleepMs > 0) usleep($sleepMs * 1000);
         }
 
-        upsert_transaction($pdo, $tx, $acctPk, $acctId);
-        $processed++;
-
-        $nextLink = $page['@nextLink'] ?? null;
+        $nextLink = $page['@nextLink'] ?? $page['@odata.nextLink'] ?? null;
         if (!$nextLink) {
             state_set($pdo, 'tx.next', null);
             echo "Processed {$processed} record(s). End of feed.\n";
@@ -198,7 +200,6 @@ function main(array $argv): void {
         }
         state_set($pdo, 'tx.next', (string)$nextLink);
         $url = (string)$nextLink;
-        if ($sleepMs > 0) usleep($sleepMs * 1000);
     }
     echo "Processed {$processed} record(s).\n";
 }
