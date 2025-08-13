@@ -17,19 +17,19 @@ $pageTitle = 'Budget';
   </head>
   <body>
     <nav class="navbar navbar-dark bg-dark border-bottom fixed-top py-2">
-      <div class="container-fluid position-relative">
+      <div class="container-fluid position-relative justify-content-center">
         <?php if ($loggedIn): ?>
-          <button class="navbar-toggler me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
+          <button class="navbar-toggler position-absolute start-0 top-50 translate-middle-y" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainMenu" aria-controls="mainMenu" aria-label="Menu">
             <span class="navbar-toggler-icon"></span>
           </button>
         <?php endif; ?>
-        <a class="navbar-brand position-absolute start-50 translate-middle-x" href="#"><?= htmlspecialchars($pageTitle) ?></a>
-        <div class="ms-auto d-flex align-items-center gap-2">
-          <?php if ($loggedIn): ?>
+        <a class="navbar-brand" href="#"><?= htmlspecialchars($pageTitle) ?></a>
+        <?php if ($loggedIn): ?>
+          <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
             <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
             <a class="btn btn-outline-secondary btn-sm" href="#" role="button" aria-disabled="true">Logout</a>
-          <?php endif; ?>
-        </div>
+          </div>
+        <?php endif; ?>
       </div>
     </nav>
     <?php if ($loggedIn): ?>
