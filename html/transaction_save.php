@@ -26,8 +26,6 @@ try {
     $description = trim((string)($_POST['description'] ?? ''));
     $checkNo = trim((string)($_POST['check_no'] ?? ''));
     $posted = trim((string)($_POST['posted'] ?? ''));
-    $category = trim((string)($_POST['category'] ?? ''));
-    $tags = trim((string)($_POST['tags'] ?? ''));
     $accountName = trim((string)($_POST['account_name'] ?? ''));
 
     if ($date !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
@@ -47,7 +45,7 @@ try {
         $accountId = (int)$sel->fetchColumn();
     }
 
-    $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, category = :category, tags = :tags WHERE id = :id';
+    $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted WHERE id = :id';
     $stmt = $pdo->prepare($sql);
     $stmt->execute([
         ':account_id' => $accountId ?: null,
@@ -56,8 +54,6 @@ try {
         ':description' => $description !== '' ? $description : null,
         ':check_no' => $checkNo !== '' ? $checkNo : null,
         ':posted' => $posted !== '' ? $posted : null,
-        ':category' => $category !== '' ? $category : null,
-        ':tags' => $tags !== '' ? $tags : null,
         ':id' => $id,
     ]);
 
@@ -66,4 +62,3 @@ try {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }
-

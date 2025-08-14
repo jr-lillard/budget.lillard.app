@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $pdo = get_mysql_connection();
             $limit = 50; // recent rows to show
             $stmt = $pdo->prepare(
-              'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.category, t.tags, t.updated_at_source, 
+              'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source, 
                       a.name AS account_name
                FROM transactions t
                LEFT JOIN accounts a ON a.id = t.account_id
@@ -128,8 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-description="<?= htmlspecialchars((string)$desc) ?>"
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
                           data-posted="<?= htmlspecialchars((string)$posted) ?>"
-                          data-category="<?= htmlspecialchars((string)($row['category'] ?? '')) ?>"
-                          data-tags="<?= htmlspecialchars((string)($row['tags'] ?? '')) ?>">
+                          >
                           Edit
                         </button>
                       </td>
@@ -203,14 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <label class="form-label">Posted</label>
                   <input type="text" class="form-control" name="posted" id="txPosted" placeholder="e.g., x">
                 </div>
-                <div class="col-4">
-                  <label class="form-label">Category</label>
-                  <input type="text" class="form-control" name="category" id="txCategory">
                 </div>
-              </div>
-              <div class="mb-2">
-                <label class="form-label">Tags</label>
-                <input type="text" class="form-control" name="tags" id="txTags">
               </div>
             </div>
             <div class="modal-footer">

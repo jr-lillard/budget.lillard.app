@@ -44,8 +44,6 @@ function ensure_tables(PDO $pdo): void {
             description TEXT,
             check_no VARCHAR(64) DEFAULT NULL,
             posted VARCHAR(32) DEFAULT NULL,
-            category VARCHAR(255) DEFAULT NULL,
-            tags TEXT,
             created_at_source DATETIME DEFAULT NULL,
             updated_at_source DATETIME DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -55,6 +53,9 @@ function ensure_tables(PDO $pdo): void {
             CONSTRAINT fk_tx_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
     );
+    // Drop deprecated columns if present
+    try { $pdo->exec("ALTER TABLE transactions DROP COLUMN category"); } catch (Throwable $e) {}
+    try { $pdo->exec("ALTER TABLE transactions DROP COLUMN tags"); } catch (Throwable $e) {}
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS sync_state (
             k VARCHAR(100) PRIMARY KEY,
@@ -148,15 +149,13 @@ function upsert_transaction(PDO $pdo, array $tx, ?string $accountPk, ?int $accou
     $desc = isset($tx['Description']) ? (string)$tx['Description'] : null;
     $check = isset($tx['Check']) ? (string)$tx['Check'] : null;
     $posted = isset($tx['Posted']) ? (string)$tx['Posted'] : null;
-    $category = isset($tx['Category']) ? (string)$tx['Category'] : null;
-    $tags = isset($tx['Tags']) ? (string)$tx['Tags'] : null;
     $createdSrc = isset($tx['CreationTimestamp']) ? rtrim(str_replace('T', ' ', (string)$tx['CreationTimestamp']), 'Z') : null;
     $updatedSrc = isset($tx['ModificationTimestamp']) ? rtrim(str_replace('T', ' ', (string)$tx['ModificationTimestamp']), 'Z') : null;
 
-    $sql = "INSERT INTO transactions (fm_pk, account_pk, account_id, `date`, amount, description, check_no, posted, category, tags, created_at_source, updated_at_source)
-            VALUES (:fm_pk, :account_pk, :account_id, :date, :amount, :description, :check_no, :posted, :category, :tags, :created_src, :updated_src)
+    $sql = "INSERT INTO transactions (fm_pk, account_pk, account_id, `date`, amount, description, check_no, posted, created_at_source, updated_at_source)
+            VALUES (:fm_pk, :account_pk, :account_id, :date, :amount, :description, :check_no, :posted, :created_src, :updated_src)
             ON DUPLICATE KEY UPDATE account_pk=VALUES(account_pk), account_id=VALUES(account_id), `date`=VALUES(`date`), amount=VALUES(amount),
-              description=VALUES(description), check_no=VALUES(check_no), posted=VALUES(posted), category=VALUES(category), tags=VALUES(tags),
+              description=VALUES(description), check_no=VALUES(check_no), posted=VALUES(posted),
               created_at_source=VALUES(created_at_source), updated_at_source=VALUES(updated_at_source), updated_at=CURRENT_TIMESTAMP";
     $stmt = $pdo->prepare($sql);
     $stmt->execute([
@@ -168,8 +167,6 @@ function upsert_transaction(PDO $pdo, array $tx, ?string $accountPk, ?int $accou
         ':description' => $desc,
         ':check_no' => $check,
         ':posted' => $posted,
-        ':category' => $category,
-        ':tags' => $tags,
         ':created_src' => $createdSrc,
         ':updated_src' => $updatedSrc,
     ]);
