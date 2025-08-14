@@ -63,32 +63,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           try {
             $pdo = get_mysql_connection();
             $limit = 50; // recent rows to show
-            $stmt = $pdo->prepare(
-              'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source, 
-                      t.account_id, a.name AS account_name
-               FROM transactions t
-               LEFT JOIN accounts a ON a.id = t.account_id
-               ORDER BY t.`date` DESC, t.updated_at_source DESC
-               LIMIT ?'
-            );
-            $stmt->bindValue(1, $limit, PDO::PARAM_INT);
-            $stmt->execute();
+            $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
+
+            $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source, 
+                           t.account_id, a.name AS account_name
+                    FROM transactions t
+                    LEFT JOIN accounts a ON a.id = t.account_id';
+            $params = [];
+            if ($filterAccountId > 0) { $sql .= ' WHERE t.account_id = ?'; $params[] = $filterAccountId; }
+            $sql .= ' ORDER BY t.`date` DESC, t.updated_at_source DESC LIMIT ?';
+            $params[] = $limit;
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
             $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            // Accounts with activity in last 12 months
-            $accSql = "SELECT DISTINCT a.name
+
+            // Accounts with activity in last 3 months (id => name)
+            $accSql = "SELECT DISTINCT a.id, a.name
                        FROM accounts a
                        JOIN transactions t ON t.account_id = a.id
                        WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
                        ORDER BY a.name ASC";
             $accStmt = $pdo->query($accSql);
-            $accounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $accPairs = $accStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+            if ($filterAccountId > 0 && !isset($accPairs[$filterAccountId])) {
+              $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');
+              $nm->execute([$filterAccountId]);
+              $name = $nm->fetchColumn();
+              if ($name !== false) { $accPairs[$filterAccountId] = (string)$name; }
+            }
+            // Keep names array for modal account select
+            $accounts = array_values($accPairs);
           } catch (Throwable $e) {
             $recentError = 'Unable to load recent transactions.';
           }
         ?>
 
         <div class="container my-4">
-          <h2 class="h5 mb-3">Recent Transactions</h2>
+          <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-2">
+            <h2 class="h5 mb-0">Recent Transactions</h2>
+            <form class="d-flex align-items-center gap-2" method="get" action="">
+              <label for="filterAccount" class="form-label mb-0">Account</label>
+              <select id="filterAccount" name="account_id" class="form-select form-select-sm" style="min-width: 240px;">
+                <option value="">All accounts</option>
+                <?php if (!empty($accPairs)) foreach ($accPairs as $aid => $aname): ?>
+                  <option value="<?= (int)$aid ?>" <?= (isset($filterAccountId) && (int)$filterAccountId === (int)$aid) ? 'selected' : '' ?>><?= htmlspecialchars((string)$aname) ?></option>
+                <?php endforeach; ?>
+              </select>
+              <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+              <?php if (!empty($_GET)): ?>
+                <a class="btn btn-sm btn-outline-secondary" href="index.php">Clear</a>
+              <?php endif; ?>
+            </form>
+          </div>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
           <?php elseif (empty($recentTx)): ?>
