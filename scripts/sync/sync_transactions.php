@@ -63,6 +63,16 @@ function ensure_tables(PDO $pdo): void {
     );
 }
 
+function max_source_timestamp(PDO $pdo): ?string {
+    $stmt = $pdo->query("SELECT GREATEST(
+        IFNULL(MAX(created_at_source), '0000-00-00 00:00:00'),
+        IFNULL(MAX(updated_at_source), '0000-00-00 00:00:00')
+    ) AS m FROM transactions");
+    $v = $stmt->fetchColumn();
+    if (!$v || $v === '0000-00-00 00:00:00') return null;
+    return (string)$v;
+}
+
 function state_get(PDO $pdo, string $k): ?string {
     $s = $pdo->prepare('SELECT v FROM sync_state WHERE k = ?');
     $s->execute([$k]);
@@ -176,11 +186,30 @@ function main(array $argv): void {
     $limit = isset($argv[1]) ? max(1, (int)$argv[1]) : 50; // process up to N records per run
     $sleepMs = isset($argv[2]) ? max(0, (int)$argv[2]) : 200; // throttle between requests (per record)
     $pageSize = isset($argv[3]) ? max(1, (int)$argv[3]) : 1; // OData $top per page
+    $sinceArg = $argv[4] ?? '';
+
+    // Build base query with optional incremental filter by ModificationTimestamp
+    $filter = '';
+    if ($sinceArg !== '') {
+        $sinceIso = $sinceArg;
+        if ($sinceArg === 'auto') {
+            $last = max_source_timestamp($pdo);
+            if ($last) {
+                // subtract 1 day safety window
+                $dt = new DateTime($last, new DateTimeZone('UTC'));
+                $dt->modify('-1 day');
+                $sinceIso = $dt->format('Y-m-d\TH:i:s\Z');
+            }
+        }
+        if ($sinceIso !== '') {
+            $filter = '&$filter=' . rawurlencode('ModificationTimestamp ge ' . $sinceIso) . '&$orderby=' . rawurlencode('ModificationTimestamp asc');
+        }
+    }
 
     $next = state_get($pdo, 'tx.next');
     $skipState = state_get($pdo, 'tx.skip');
     $skip = $skipState !== null ? max(0, (int)$skipState) : 0;
-    $url = $next ?: ($base . '/Transactions?$top=' . $pageSize . ($skip > 0 ? ('&$skip=' . $skip) : ''));
+    $url = $next ?: ($base . '/Transactions?$top=' . $pageSize . $filter . ($skip > 0 ? ('&$skip=' . $skip) : ''));
     $processed = 0;
 
     while ($processed < $limit) {
@@ -215,7 +244,7 @@ function main(array $argv): void {
             $skip += count($values);
             state_set($pdo, 'tx.next', null);
             state_set($pdo, 'tx.skip', (string)$skip);
-            $url = $base . '/Transactions?$top=' . $pageSize . '&$skip=' . $skip;
+            $url = $base . '/Transactions?$top=' . $pageSize . $filter . '&$skip=' . $skip;
             // If fewer than requested returned, likely end-of-feed
             if (count($values) < $pageSize) {
                 state_set($pdo, 'tx.next', null);
