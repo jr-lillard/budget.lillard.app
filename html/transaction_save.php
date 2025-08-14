@@ -25,7 +25,7 @@ try {
     $amount = trim((string)($_POST['amount'] ?? ''));
     $description = trim((string)($_POST['description'] ?? ''));
     $checkNo = trim((string)($_POST['check_no'] ?? ''));
-    $posted = trim((string)($_POST['posted'] ?? ''));
+    $postedInt = isset($_POST['posted']) ? 1 : 0;
     // Accept either selection or a new name
     $accountSelect = trim((string)($_POST['account_select'] ?? ''));
     $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
@@ -63,7 +63,7 @@ try {
         ':amount' => $amount !== '' ? $amount : null,
         ':description' => $description !== '' ? $description : null,
         ':check_no' => $checkNo !== '' ? $checkNo : null,
-        ':posted' => $posted !== '' ? $posted : null,
+            ':posted' => $postedInt,
         ':id' => $id,
     ]);
 

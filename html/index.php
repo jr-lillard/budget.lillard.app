@@ -206,9 +206,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <label class="form-label">Check #</label>
                   <input type="text" class="form-control" name="check_no" id="txCheck">
                 </div>
-                <div class="col-4">
-                  <label class="form-label">Posted</label>
-                  <input type="text" class="form-control" name="posted" id="txPosted" placeholder="e.g., x">
+                <div class="col-4 d-flex align-items-end">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="txPosted" name="posted">
+                    <label class="form-check-label" for="txPosted">Posted</label>
+                  </div>
                 </div>
                 </div>
               </div>
@@ -285,7 +287,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription', btn.dataset.description);
           setv('txCheck', btn.dataset.check);
-          setv('txPosted', btn.dataset.posted);
+          // Posted checkbox
+          const postedEl = g('txPosted');
+          if (postedEl) postedEl.checked = (btn.dataset.posted === '1');
           // Category/Tags removed from UI; guard against older attributes
           setv('txCategory', btn.dataset.category);
           setv('txTags', btn.dataset.tags);

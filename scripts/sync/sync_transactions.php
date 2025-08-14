@@ -42,7 +42,7 @@ function ensure_tables(PDO $pdo): void {
             amount DECIMAL(14,2) DEFAULT NULL,
             description TEXT,
             check_no VARCHAR(64) DEFAULT NULL,
-            posted VARCHAR(32) DEFAULT NULL,
+            posted TINYINT(1) NOT NULL DEFAULT 0,
             created_at_source DATETIME DEFAULT NULL,
             updated_at_source DATETIME DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -56,6 +56,10 @@ function ensure_tables(PDO $pdo): void {
     try { $pdo->exec("ALTER TABLE transactions DROP COLUMN category"); } catch (Throwable $e) {}
     try { $pdo->exec("ALTER TABLE transactions DROP COLUMN tags"); } catch (Throwable $e) {}
     try { $pdo->exec("ALTER TABLE transactions DROP COLUMN account_pk"); } catch (Throwable $e) {}
+    // Convert posted from legacy text ('x') to numeric flag and enforce type
+    try { $pdo->exec("UPDATE transactions SET posted = 1 WHERE posted = 'x'"); } catch (Throwable $e) {}
+    try { $pdo->exec("UPDATE transactions SET posted = 0 WHERE posted IS NULL OR posted = ''"); } catch (Throwable $e) {}
+    try { $pdo->exec("ALTER TABLE transactions MODIFY posted TINYINT(1) NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS sync_state (
             k VARCHAR(100) PRIMARY KEY,
@@ -148,7 +152,8 @@ function upsert_transaction(PDO $pdo, array $tx, ?int $accountId): void {
     $amount = isset($tx['Amount']) && $tx['Amount'] !== '' ? (string)$tx['Amount'] : null;
     $desc = isset($tx['Description']) ? (string)$tx['Description'] : null;
     $check = isset($tx['Check']) ? (string)$tx['Check'] : null;
-    $posted = isset($tx['Posted']) ? (string)$tx['Posted'] : null;
+    $postedRaw = isset($tx['Posted']) ? (string)$tx['Posted'] : '';
+    $posted = (strtolower($postedRaw) === 'x' || $postedRaw === '1') ? 1 : 0;
     $createdSrc = isset($tx['CreationTimestamp']) ? rtrim(str_replace('T', ' ', (string)$tx['CreationTimestamp']), 'Z') : null;
     $updatedSrc = isset($tx['ModificationTimestamp']) ? rtrim(str_replace('T', ' ', (string)$tx['ModificationTimestamp']), 'Z') : null;
 
