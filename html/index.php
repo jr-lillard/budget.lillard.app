@@ -118,7 +118,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
         <div class="container my-4">
           <div class="d-flex flex-wrap align-items-center justify-content-between mb-2 gap-2">
-            <h2 class="h5 mb-0">Recent Transactions</h2>
+            <div class="d-flex align-items-center gap-2">
+              <h2 class="h5 mb-0">Recent Transactions</h2>
+              <button type="button" class="btn btn-sm btn-success" id="addTxBtn"
+                data-account-name="<?= (isset($filterAccountId) && $filterAccountId > 0 && isset($accPairs[$filterAccountId])) ? htmlspecialchars((string)$accPairs[$filterAccountId]) : '' ?>">
+                + Add Transaction
+              </button>
+            </div>
             <form class="d-flex align-items-center gap-2" method="get" action="">
               <label for="filterAccount" class="form-label mb-0">Account</label>
               <select id="filterAccount" name="account_id" class="form-select form-select-sm" style="min-width: 240px;">
