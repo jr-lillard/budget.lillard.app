@@ -159,6 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       $desc = $row['description'] ?? '';
                       $amt = $row['amount'];
                       $posted = $row['posted'] ?? '';
+                      $postedBool = (string)$posted === '1' || $posted === 1;
                       $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                       $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                       $txId = (int)($row['id'] ?? 0);
@@ -176,7 +177,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
-                      <td><?= htmlspecialchars((string)$posted) ?></td>
+                      <td class="text-center" title="<?= $postedBool ? 'Posted' : 'Not posted' ?>" aria-label="<?= $postedBool ? 'Posted' : 'Not posted' ?>">
+                        <?= $postedBool ? '☑' : '☐' ?>
+                      </td>
                       <td class="text-end">
                         <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
                                 data-id="<?= $txId ?>"
