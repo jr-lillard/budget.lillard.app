@@ -95,6 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <th scope="col">Description</th>
                     <th scope="col" class="text-end">Amount</th>
                     <th scope="col">Posted</th>
+                    <th scope="col" class="text-end">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -107,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       $posted = $row['posted'] ?? '';
                       $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                       $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
+                      $txId = (int)($row['id'] ?? 0);
                     ?>
                     <tr>
                       <td><?= htmlspecialchars((string)$date) ?></td>
@@ -114,6 +116,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
                       <td><?= htmlspecialchars((string)$posted) ?></td>
+                      <td class="text-end">
+                        <a class="btn btn-sm btn-outline-secondary" href="transaction.php?id=<?= $txId ?>">Edit</a>
+                      </td>
                     </tr>
                   <?php endforeach; ?>
                 </tbody>
