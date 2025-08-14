@@ -182,12 +182,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               </div>
               <div class="mb-2">
                 <label class="form-label">Account</label>
-                <input list="accountsList" class="form-control" name="account_name" id="txAccount" placeholder="Start typing…">
-                <datalist id="accountsList">
+                <select class="form-select" name="account_select" id="txAccountSelect">
                   <?php if (!empty($accounts)) foreach ($accounts as $a): ?>
-                    <option value="<?= htmlspecialchars((string)$a) ?>"></option>
+                    <option value="<?= htmlspecialchars((string)$a) ?>"><?= htmlspecialchars((string)$a) ?></option>
                   <?php endforeach; ?>
-                </datalist>
+                  <option value="__new__">Add new account…</option>
+                </select>
+                <input type="text" class="form-control mt-2 d-none" name="account_name_new" id="txAccountNew" placeholder="New account name">
               </div>
               <div class="mb-2">
                 <label class="form-label">Description</label>
@@ -248,7 +249,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txId', btn.dataset.id);
           setv('txDate', btn.dataset.date);
           setv('txAmount', btn.dataset.amount);
-          setv('txAccount', btn.dataset.account);
+          // Account select / new
+          const sel = g('txAccountSelect');
+          const newInput = g('txAccountNew');
+          if (sel) {
+            const acct = btn.dataset.account || '';
+            // If option exists, select it, else choose __new__ and prefill new input
+            let found = false;
+            if (acct !== '') {
+              for (const opt of sel.options) { if (opt.value === acct) { sel.value = acct; found = true; break; } }
+            }
+            if (!found) {
+              sel.value = '__new__';
+              if (newInput) { newInput.classList.remove('d-none'); newInput.value = acct; }
+            } else if (newInput) {
+              newInput.classList.add('d-none'); newInput.value = '';
+            }
+          }
           setv('txDescription', btn.dataset.description);
           setv('txCheck', btn.dataset.check);
           setv('txPosted', btn.dataset.posted);
@@ -257,6 +274,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txTags', btn.dataset.tags);
           modal && modal.show();
         });
+        // Toggle new account input visibility on select change
+        const sel = g('txAccountSelect');
+        sel && sel.addEventListener('change', () => {
+          const newInput = g('txAccountNew');
+          if (!newInput) return;
+          if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
+        });
+
         form && form.addEventListener('submit', async (ev) => {
           ev.preventDefault();
           const fd = new FormData(form);

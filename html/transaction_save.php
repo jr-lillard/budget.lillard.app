@@ -26,7 +26,10 @@ try {
     $description = trim((string)($_POST['description'] ?? ''));
     $checkNo = trim((string)($_POST['check_no'] ?? ''));
     $posted = trim((string)($_POST['posted'] ?? ''));
-    $accountName = trim((string)($_POST['account_name'] ?? ''));
+    // Accept either selection or a new name
+    $accountSelect = trim((string)($_POST['account_select'] ?? ''));
+    $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
+    $accountName = $accountSelect === '__new__' ? $accountNew : ($accountSelect ?: $accountNew);
 
     if ($date !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         throw new RuntimeException('Date must be YYYY-MM-DD');
