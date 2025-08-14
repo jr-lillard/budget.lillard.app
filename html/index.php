@@ -225,6 +225,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 </tbody>
               </table>
             </div>
+            <hr class="my-4">
+            <?php
+              // Load reminders summary and list
+              try {
+                $rsql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, a.name AS account_name
+                         FROM reminders r LEFT JOIN accounts a ON a.id = r.account_id
+                         ORDER BY r.due ASC, r.updated_at_source DESC';
+                $rstmt = $pdo->query($rsql);
+                $reminders = $rstmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+              } catch (Throwable $e) {
+                $reminders = [];
+              }
+            ?>
+            <h3 class="h6 mb-2">Reminders</h3>
+            <?php if (empty($reminders)): ?>
+              <div class="text-body-secondary">No reminders.</div>
+            <?php else: ?>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th scope="col">Due</th>
+                      <th scope="col">Account</th>
+                      <th scope="col">Description</th>
+                      <th scope="col" class="text-end">Amount</th>
+                      <th scope="col">Frequency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php foreach ($reminders as $r): ?>
+                      <?php
+                        $due = $r['due'] ?? '';
+                        $racct = $r['account_name'] ?? ($r['account_name'] ?? '');
+                        $rdesc = $r['description'] ?? '';
+                        $ramt = $r['amount'];
+                        $rfreq = $r['frequency'] ?? '';
+                        $ramtClass = (is_numeric($ramt) && (float)$ramt < 0) ? 'text-danger' : 'text-success';
+                        $ramtFmt = is_numeric($ramt) ? number_format((float)$ramt, 2) : htmlspecialchars((string)$ramt);
+                      ?>
+                      <tr>
+                        <td><?= htmlspecialchars((string)$due) ?></td>
+                        <td><?= htmlspecialchars((string)$racct) ?></td>
+                        <td class="text-truncate" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$rdesc) ?></td>
+                        <td class="text-end <?= $ramtClass ?>">$<?= $ramtFmt ?></td>
+                        <td><?= htmlspecialchars((string)$rfreq) ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+                </table>
+              </div>
+            <?php endif; ?>
           <?php endif; ?>
         </div>
       <?php else: ?>
