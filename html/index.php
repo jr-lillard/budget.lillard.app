@@ -6,6 +6,8 @@ require_once __DIR__ . '/../util.php';
 $pageTitle = 'Budget';
 $loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
 $loginError = '';
+$recentTx = [];
+$recentError = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     $username = trim((string)($_POST['username'] ?? ''));
@@ -57,7 +59,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
     <main>
       <?php if ($loggedIn): ?>
-        <div class="container mt-5"></div>
+        <?php
+          try {
+            $pdo = get_mysql_connection();
+            $limit = 50; // recent rows to show
+            $stmt = $pdo->prepare(
+              'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.category, t.tags, t.updated_at_source, 
+                      a.name AS account_name
+               FROM transactions t
+               LEFT JOIN accounts a ON a.id = t.account_id
+               ORDER BY t.`date` DESC, t.updated_at_source DESC
+               LIMIT ?'
+            );
+            $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+            $stmt->execute();
+            $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+          } catch (Throwable $e) {
+            $recentError = 'Unable to load recent transactions.';
+          }
+        ?>
+
+        <div class="container my-4">
+          <h2 class="h5 mb-3">Recent Transactions</h2>
+          <?php if ($recentError !== ''): ?>
+            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
+          <?php elseif (empty($recentTx)): ?>
+            <div class="text-body-secondary">No transactions to display.</div>
+          <?php else: ?>
+            <div class="table-responsive">
+              <table class="table table-striped table-hover table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">Account</th>
+                    <th scope="col">Description</th>
+                    <th scope="col" class="text-end">Amount</th>
+                    <th scope="col">Posted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($recentTx as $row): ?>
+                    <?php
+                      $date = $row['date'] ?? '';
+                      $acct = $row['account_name'] ?? '';
+                      $desc = $row['description'] ?? '';
+                      $amt = $row['amount'];
+                      $posted = $row['posted'] ?? '';
+                      $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
+                      $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
+                    ?>
+                    <tr>
+                      <td><?= htmlspecialchars((string)$date) ?></td>
+                      <td><?= htmlspecialchars((string)$acct) ?></td>
+                      <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
+                      <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
+                      <td><?= htmlspecialchars((string)$posted) ?></td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          <?php endif; ?>
+        </div>
       <?php else: ?>
         <div class="container mt-5 mx-auto" style="max-width: 420px;">
           <?php if ($loginError !== ''): ?>
