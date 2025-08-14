@@ -103,6 +103,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             }
             // Keep names array for modal account select
             $accounts = array_values($accPairs);
+
+            // Descriptions (distinct) from last 3 months for autocomplete
+            $descSql = "SELECT DISTINCT description FROM transactions
+                        WHERE description IS NOT NULL AND description <> ''
+                          AND `date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+                        ORDER BY description ASC LIMIT 200";
+            $descStmt = $pdo->query($descSql);
+            $descriptions = $descStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
           } catch (Throwable $e) {
             $recentError = 'Unable to load recent transactions.';
           }
@@ -257,7 +265,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               </div>
               <div class="mb-2">
                 <label class="form-label">Description</label>
-                <input type="text" class="form-control" name="description" id="txDescription">
+                <input type="text" class="form-control" name="description" id="txDescription" list="descriptionsList" autocomplete="off">
+                <datalist id="descriptionsList">
+                  <?php if (!empty($descriptions)) foreach ($descriptions as $d): ?>
+                    <option value="<?= htmlspecialchars((string)$d) ?>"></option>
+                  <?php endforeach; ?>
+                </datalist>
               </div>
               <div class="row g-2 mb-2">
                 <div class="col-4">
