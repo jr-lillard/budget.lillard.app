@@ -29,6 +29,7 @@ try {
     // Accept either selection or a new name
     $accountSelect = trim((string)($_POST['account_select'] ?? ''));
     $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
+    $accountKeep = (int)($_POST['account_keep'] ?? 0);
     $accountName = $accountSelect === '__new__' ? $accountNew : ($accountSelect ?: $accountNew);
 
     if ($date !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
@@ -40,11 +41,17 @@ try {
 
     // Resolve account id
     $accountId = null;
-    if ($accountName !== '') {
+    if ($accountSelect === '__current__' && $accountKeep > 0) {
+        $accountId = $accountKeep;
+    } elseif ($accountSelect === '__new__' && $accountNew !== '') {
         $ins = $pdo->prepare('INSERT INTO accounts (name) VALUES (?) ON DUPLICATE KEY UPDATE updated_at = updated_at');
-        $ins->execute([$accountName]);
+        $ins->execute([$accountNew]);
         $sel = $pdo->prepare('SELECT id FROM accounts WHERE name = ?');
-        $sel->execute([$accountName]);
+        $sel->execute([$accountNew]);
+        $accountId = (int)$sel->fetchColumn();
+    } elseif ($accountSelect !== '' && $accountSelect !== '__new__' && $accountSelect !== '__current__') {
+        $sel = $pdo->prepare('SELECT id FROM accounts WHERE name = ?');
+        $sel->execute([$accountSelect]);
         $accountId = (int)$sel->fetchColumn();
     }
 

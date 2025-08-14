@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $limit = 50; // recent rows to show
             $stmt = $pdo->prepare(
               'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source, 
-                      a.name AS account_name
+                      t.account_id, a.name AS account_name
                FROM transactions t
                LEFT JOIN accounts a ON a.id = t.account_id
                ORDER BY t.`date` DESC, t.updated_at_source DESC
@@ -126,14 +126,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td><?= htmlspecialchars((string)$posted) ?></td>
                       <td class="text-end">
                         <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
-                          data-id="<?= $txId ?>"
-                          data-date="<?= htmlspecialchars((string)$date) ?>"
-                          data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                          data-account="<?= htmlspecialchars((string)$acct) ?>"
-                          data-description="<?= htmlspecialchars((string)$desc) ?>"
-                          data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                          data-posted="<?= htmlspecialchars((string)$posted) ?>"
-                          >
+                                data-id="<?= $txId ?>"
+                                data-date="<?= htmlspecialchars((string)$date) ?>"
+                                data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                                data-account="<?= htmlspecialchars((string)$acct) ?>"
+                                data-description="<?= htmlspecialchars((string)$desc) ?>"
+                                data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                                data-posted="<?= htmlspecialchars((string)$posted) ?>"
+                                data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
+                                >
                           Edit
                         </button>
                       </td>
@@ -175,6 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             </div>
             <div class="modal-body">
               <input type="hidden" name="id" id="txId">
+              <input type="hidden" name="account_keep" id="txAccountKeep">
               <div class="row g-2 mb-2">
                 <div class="col-6">
                   <label class="form-label">Date</label>
@@ -259,18 +261,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const newInput = g('txAccountNew');
           if (sel) {
             const acct = btn.dataset.account || '';
+            const acctId = btn.dataset.accountId || '';
+            const keep = g('txAccountKeep'); if (keep) keep.value = acctId || '';
             // If option exists, select it, else choose __new__ and prefill new input
             let found = false;
             if (acct !== '') {
               for (const opt of sel.options) { if (opt.value === acct) { sel.value = acct; found = true; break; } }
             }
             if (!found) {
-              // Add current account as a temporary option to allow selection
+              // Add current account as a temporary disabled option to show current value (kept)
               if (acct !== '') {
                 const opt = document.createElement('option');
-                opt.value = acct; opt.textContent = acct;
+                opt.value = '__current__'; opt.textContent = `Current: ${acct}`; opt.disabled = true; opt.selected = true;
                 sel.insertBefore(opt, sel.firstChild);
-                sel.value = acct; found = true;
                 if (newInput) { newInput.classList.add('d-none'); newInput.value = ''; }
               } else {
                 sel.value = '__new__';
