@@ -239,20 +239,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const modalEl = document.getElementById('editTxModal');
         const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
         const form = document.getElementById('editTxForm');
-        function g(id){ return document.getElementById(id); }
+        const g = (id) => document.getElementById(id);
+        const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
         document.addEventListener('click', (e) => {
           const btn = e.target.closest('.btn-edit-tx');
           if (!btn) return;
           e.preventDefault();
-          g('txId').value = btn.dataset.id || '';
-          g('txDate').value = btn.dataset.date || '';
-          g('txAmount').value = btn.dataset.amount || '';
-          g('txAccount').value = btn.dataset.account || '';
-          g('txDescription').value = btn.dataset.description || '';
-          g('txCheck').value = btn.dataset.check || '';
-          g('txPosted').value = btn.dataset.posted || '';
-          g('txCategory').value = btn.dataset.category || '';
-          g('txTags').value = btn.dataset.tags || '';
+          setv('txId', btn.dataset.id);
+          setv('txDate', btn.dataset.date);
+          setv('txAmount', btn.dataset.amount);
+          setv('txAccount', btn.dataset.account);
+          setv('txDescription', btn.dataset.description);
+          setv('txCheck', btn.dataset.check);
+          setv('txPosted', btn.dataset.posted);
+          // Category/Tags removed from UI; guard against older attributes
+          setv('txCategory', btn.dataset.category);
+          setv('txTags', btn.dataset.tags);
           modal && modal.show();
         });
         form && form.addEventListener('submit', async (ev) => {
