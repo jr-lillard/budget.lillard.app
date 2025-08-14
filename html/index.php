@@ -74,8 +74,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $stmt->bindValue(1, $limit, PDO::PARAM_INT);
             $stmt->execute();
             $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            // Accounts list for modal datalist
-            $accStmt = $pdo->query('SELECT name FROM accounts ORDER BY name ASC');
+            // Accounts with activity in last 12 months
+            $accSql = "SELECT DISTINCT a.name
+                       FROM accounts a
+                       JOIN transactions t ON t.account_id = a.id
+                       WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                       ORDER BY a.name ASC";
+            $accStmt = $pdo->query($accSql);
             $accounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
           } catch (Throwable $e) {
             $recentError = 'Unable to load recent transactions.';
@@ -260,8 +265,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               for (const opt of sel.options) { if (opt.value === acct) { sel.value = acct; found = true; break; } }
             }
             if (!found) {
-              sel.value = '__new__';
-              if (newInput) { newInput.classList.remove('d-none'); newInput.value = acct; }
+              // Add current account as a temporary option to allow selection
+              if (acct !== '') {
+                const opt = document.createElement('option');
+                opt.value = acct; opt.textContent = acct;
+                sel.insertBefore(opt, sel.firstChild);
+                sel.value = acct; found = true;
+                if (newInput) { newInput.classList.add('d-none'); newInput.value = ''; }
+              } else {
+                sel.value = '__new__';
+                if (newInput) { newInput.classList.remove('d-none'); newInput.value = ''; }
+              }
             } else if (newInput) {
               newInput.classList.add('d-none'); newInput.value = '';
             }
