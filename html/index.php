@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     LEFT JOIN accounts a ON a.id = t.account_id';
             $params = [];
             if ($filterAccountId > 0) { $sql .= ' WHERE t.account_id = ?'; $params[] = $filterAccountId; }
-            $sql .= ' ORDER BY t.posted ASC, t.`date` DESC, t.updated_at_source DESC LIMIT ?';
+            $sql .= ' ORDER BY t.posted ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
             $params[] = $limit;
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
