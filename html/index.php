@@ -77,6 +77,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $stmt->execute($params);
             $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+            // Compute total sum across all matching transactions (not limited)
+            $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t';
+            $sumParams = [];
+            if ($filterAccountId > 0) { $sumSql .= ' WHERE t.account_id = ?'; $sumParams[] = $filterAccountId; }
+            $sumStmt = $pdo->prepare($sumSql);
+            $sumStmt->execute($sumParams);
+            $sumRow = $sumStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
+            $totalAmount = (float)($sumRow['total'] ?? 0);
+            $totalCount = (int)($sumRow['cnt'] ?? 0);
+
             // Accounts with activity in last 3 months (id => name)
             $accSql = "SELECT DISTINCT a.id, a.name
                        FROM accounts a
@@ -99,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         ?>
 
         <div class="container my-4">
-          <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-2">
+          <div class="d-flex flex-wrap align-items-center justify-content-between mb-2 gap-2">
             <h2 class="h5 mb-0">Recent Transactions</h2>
             <form class="d-flex align-items-center gap-2" method="get" action="">
               <label for="filterAccount" class="form-label mb-0">Account</label>
@@ -114,6 +124,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 <a class="btn btn-sm btn-outline-secondary" href="index.php">Clear</a>
               <?php endif; ?>
             </form>
+          </div>
+          <div class="mb-3">
+            <?php
+              $sumClass = $totalAmount < 0 ? 'text-danger' : 'text-success';
+              $sumFmt = number_format($totalAmount, 2);
+            ?>
+            <span class="text-body-secondary">Total<?= $filterAccountId ? ' for account' : '' ?>:</span>
+            <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
+            <span class="text-body-secondary ms-2">(<?= (int)$totalCount ?> transactions)</span>
           </div>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
