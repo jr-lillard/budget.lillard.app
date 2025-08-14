@@ -180,8 +180,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="text-center">
                         <?php if ($postedBool): ?>
                           <span class="text-success fs-4" title="Posted" aria-label="Posted">✓</span>
-                        <?php else: ?>
-                          <span class="text-body-tertiary fs-4" title="Not posted" aria-label="Not posted">–</span>
                         <?php endif; ?>
                       </td>
                       <td class="text-end">
