@@ -78,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $accSql = "SELECT DISTINCT a.name
                        FROM accounts a
                        JOIN transactions t ON t.account_id = a.id
-                       WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+                       WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
                        ORDER BY a.name ASC";
             $accStmt = $pdo->query($accSql);
             $accounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
