@@ -19,7 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 try {
     $pdo = get_mysql_connection();
     $id = (int)($_POST['id'] ?? 0);
-    if ($id <= 0) throw new RuntimeException('Invalid id');
+    // New vs update
+    $isInsert = ($id <= 0);
 
     $date = trim((string)($_POST['date'] ?? ''));
     $amount = trim((string)($_POST['amount'] ?? ''));
@@ -55,19 +56,39 @@ try {
         $accountId = (int)$sel->fetchColumn();
     }
 
-    $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted WHERE id = :id';
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-        ':account_id' => $accountId ?: null,
-        ':date' => $date !== '' ? $date : null,
-        ':amount' => $amount !== '' ? $amount : null,
-        ':description' => $description !== '' ? $description : null,
-        ':check_no' => $checkNo !== '' ? $checkNo : null,
+    if ($isInsert) {
+        // Generate a GUID-like fm_pk
+        $bytes = random_bytes(16);
+        $hex = strtoupper(bin2hex($bytes));
+        $fm_pk = substr($hex,0,8) . '-' . substr($hex,8,4) . '-' . substr($hex,12,4) . '-' . substr($hex,16,4) . '-' . substr($hex,20);
+        $sql = 'INSERT INTO transactions (fm_pk, account_id, `date`, amount, description, check_no, posted, created_at_source, updated_at_source)
+                VALUES (:fm_pk, :account_id, :date, :amount, :description, :check_no, :posted, NOW(), NOW())';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            ':fm_pk' => $fm_pk,
+            ':account_id' => $accountId ?: null,
+            ':date' => $date !== '' ? $date : null,
+            ':amount' => $amount !== '' ? $amount : null,
+            ':description' => $description !== '' ? $description : null,
+            ':check_no' => $checkNo !== '' ? $checkNo : null,
             ':posted' => $postedInt,
-        ':id' => $id,
-    ]);
-
-    echo json_encode(['ok' => true, 'id' => $id]);
+        ]);
+        $newId = (int)$pdo->lastInsertId();
+        echo json_encode(['ok' => true, 'id' => $newId]);
+    } else {
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted WHERE id = :id';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            ':account_id' => $accountId ?: null,
+            ':date' => $date !== '' ? $date : null,
+            ':amount' => $amount !== '' ? $amount : null,
+            ':description' => $description !== '' ? $description : null,
+            ':check_no' => $checkNo !== '' ? $checkNo : null,
+            ':posted' => $postedInt,
+            ':id' => $id,
+        ]);
+        echo json_encode(['ok' => true, 'id' => $id]);
+    }
 } catch (Throwable $e) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);

@@ -366,6 +366,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txTags', btn.dataset.tags);
           modal && modal.show();
         });
+        // Add new transaction
+        const addBtn = document.getElementById('addTxBtn');
+        addBtn && addBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          // reset form
+          setv('txId','');
+          const today = new Date();
+          const yyyy = today.getFullYear();
+          const mm = String(today.getMonth()+1).padStart(2,'0');
+          const dd = String(today.getDate()).padStart(2,'0');
+          setv('txDate', `${yyyy}-${mm}-${dd}`);
+          setv('txAmount','');
+          // Set account to current filter if present
+          const acctName = addBtn.dataset.accountName || '';
+          const sel2 = g('txAccountSelect');
+          const newInput2 = g('txAccountNew');
+          const keep2 = g('txAccountKeep'); if (keep2) keep2.value = '';
+          if (sel2) {
+            let found=false;
+            if (acctName) { for (const opt of sel2.options){ if(opt.value===acctName){ sel2.value=acctName; found=true; break; } } }
+            if (!found){ sel2.value='__new__'; newInput2 && (newInput2.classList.remove('d-none'), newInput2.value=acctName); }
+            else { newInput2 && (newInput2.classList.add('d-none'), newInput2.value=''); }
+          }
+          setv('txDescription','');
+          setv('txCheck','');
+          const postedEl2 = g('txPosted'); if (postedEl2) postedEl2.checked = false;
+          modal && modal.show();
+        });
         // Toggle new account input visibility on select change
         const sel = g('txAccountSelect');
         sel && sel.addEventListener('change', () => {
