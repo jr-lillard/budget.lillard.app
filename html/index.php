@@ -177,8 +177,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
-                      <td class="text-center" title="<?= $postedBool ? 'Posted' : 'Not posted' ?>" aria-label="<?= $postedBool ? 'Posted' : 'Not posted' ?>">
-                        <?= $postedBool ? '☑' : '☐' ?>
+                      <td class="text-center">
+                        <?php if ($postedBool): ?>
+                          <span class="text-success fs-4" title="Posted" aria-label="Posted">✓</span>
+                        <?php else: ?>
+                          <span class="text-body-tertiary fs-4" title="Not posted" aria-label="Not posted">–</span>
+                        <?php endif; ?>
                       </td>
                       <td class="text-end">
                         <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
