@@ -177,17 +177,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                       $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                       $txId = (int)($row['id'] ?? 0);
-                      $isNewGroup = ($date !== $currentDate);
-                      if ($isNewGroup) {
-                        $label = $date;
-                        $ts = strtotime((string)$date);
-                        if ($ts !== false) { $label = date('l, F j, Y', $ts); }
-                        echo '<tr class="table-active"><td colspan="6">' . htmlspecialchars($label) . '</td></tr>';
-                        $currentDate = $date;
+                      // Pending section first (no date), then posted grouped by day
+                      $dateCell = '';
+                      if (!$postedBool) {
+                        if (!isset($pendingHeaderShown) || !$pendingHeaderShown) {
+                          echo '<tr class="table-active"><td colspan="6">Pending</td></tr>';
+                          $pendingHeaderShown = true;
+                        }
+                      } else {
+                        $isNewGroup = ($date !== $currentDate);
+                        if ($isNewGroup) {
+                          $label = $date;
+                          $ts = strtotime((string)$date);
+                          if ($ts !== false) { $label = date('l, F j, Y', $ts); }
+                          echo '<tr class="table-active"><td colspan="6">' . htmlspecialchars($label) . '</td></tr>';
+                          $currentDate = $date;
+                          $dateCell = htmlspecialchars((string)$date);
+                        }
                       }
                     ?>
                     <tr data-tx-id="<?= $txId ?>">
-                      <td><?= $isNewGroup ? htmlspecialchars((string)$date) : '' ?></td>
+                      <td><?= $dateCell ?></td>
                       <td><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
