@@ -22,9 +22,9 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
 } catch (Throwable $e) {
     $error = 'Unable to load reminders.';
 }
-  // Accounts used by reminders for select lists
+  // Accounts for select lists (load all accounts so new reminders can target any existing account)
   try {
-    $as = $pdo->query('SELECT DISTINCT a.id, a.name FROM accounts a JOIN reminders r ON r.account_id = a.id ORDER BY a.name ASC');
+    $as = $pdo->query('SELECT id, name FROM accounts ORDER BY name ASC');
     $accPairs = $as->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
     $accounts = array_values($accPairs);
   } catch (Throwable $e) { $accPairs = []; $accounts = []; }
@@ -42,7 +42,10 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
       <div class="container-fluid position-relative">
         <a class="btn btn-outline-secondary btn-sm" href="index.php">← Transactions</a>
         <span class="navbar-brand mx-auto">Reminders</span>
-        <span class="position-absolute end-0 top-50 translate-middle-y text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)($_SESSION['username'] ?? '')) ?></span>
+        <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
+          <button type="button" class="btn btn-sm btn-success" id="addRemBtn">+ Add Reminder</button>
+          <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)($_SESSION['username'] ?? '')) ?></span>
+        </div>
       </div>
     </nav>
 
@@ -167,6 +170,7 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
       const form = document.getElementById('editRemForm');
       const g = (id) => document.getElementById(id);
       const setv = (id,v)=>{ const el=g(id); if(el) el.value = v || ''; };
+      const todayStr = () => { const d=new Date(); const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; };
       document.addEventListener('click', (e) => {
         const btn = e.target.closest('.btn-edit-rem');
         if (!btn) return;
@@ -201,6 +205,37 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         const newInput = g('remAccountNew');
         if (!newInput) return;
         if (sel.value==='__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
+      });
+      const addBtn = document.getElementById('addRemBtn');
+      addBtn && addBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        // Reset form for a new reminder
+        setv('remId','');
+        setv('remDue', todayStr());
+        setv('remAmount','');
+        setv('remDescription','');
+        setv('remFrequency','');
+        const keep = g('remAccountKeep'); if (keep) keep.value = '';
+        const sel = g('remAccountSelect');
+        const newInput = g('remAccountNew');
+        if (sel) {
+          // Prefer first real account option if available; else default to __new__
+          let chosen = '';
+          for (const opt of sel.options) {
+            if (opt.disabled) continue;
+            if (opt.value !== '__new__' && opt.value !== '__current__') { chosen = opt.value; break; }
+          }
+          if (chosen) {
+            sel.value = chosen;
+            newInput && (newInput.classList.add('d-none'), newInput.value='');
+          } else {
+            sel.value = '__new__';
+            newInput && (newInput.classList.remove('d-none'), newInput.value='');
+          }
+        } else if (newInput) {
+          newInput.classList.remove('d-none'); newInput.value='';
+        }
+        modal && modal.show();
       });
       form && form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
