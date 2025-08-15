@@ -87,6 +87,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $totalAmount = (float)($sumRow['total'] ?? 0);
             $totalCount = (int)($sumRow['cnt'] ?? 0);
 
+            // Compute posted-only total across matching transactions (not limited)
+            $postedSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t WHERE t.posted = 1';
+            $postedParams = [];
+            if ($filterAccountId > 0) { $postedSql .= ' AND t.account_id = ?'; $postedParams[] = $filterAccountId; }
+            $postedStmt = $pdo->prepare($postedSql);
+            $postedStmt->execute($postedParams);
+            $postedRow = $postedStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
+            $postedTotalAmount = (float)($postedRow['total'] ?? 0);
+            $postedTotalCount = (int)($postedRow['cnt'] ?? 0);
+
             // Accounts with activity in last 3 months (id => name)
             $accSql = "SELECT DISTINCT a.id, a.name
                        FROM accounts a
@@ -144,10 +154,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             <?php
               $sumClass = $totalAmount < 0 ? 'text-danger' : 'text-success';
               $sumFmt = number_format($totalAmount, 2);
+              $postedClass = $postedTotalAmount < 0 ? 'text-danger' : 'text-success';
+              $postedFmt = number_format($postedTotalAmount, 2);
             ?>
             <span class="text-body-secondary">Total<?= $filterAccountId ? ' for account' : '' ?>:</span>
             <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
             <span class="text-body-secondary ms-2">(<?= (int)$totalCount ?> transactions)</span>
+            <span class="text-body-secondary ms-3">Posted total:</span>
+            <strong class="<?= $postedClass ?>">$<?= $postedFmt ?></strong>
+            <span class="text-body-secondary ms-2">(<?= (int)$postedTotalCount ?> posted)</span>
           </div>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
