@@ -105,6 +105,7 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
                       data-account-id="<?= (int)($r['account_id'] ?? 0) ?>">
                       Edit
                     </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger btn-delete-rem" data-id="<?= $rid ?>" data-description="<?= htmlspecialchars((string)$desc) ?>">Delete</button>
                   </td>
                 </tr>
               <?php endforeach; ?>
@@ -244,6 +245,21 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         if (!res.ok) return;
         try { await res.json(); } catch {}
         modal && modal.hide();
+        window.location.reload();
+      });
+      document.addEventListener('click', async (e) => {
+        const del = e.target.closest('.btn-delete-rem');
+        if (!del) return;
+        e.preventDefault();
+        const id = del.dataset.id;
+        const desc = del.dataset.description || '';
+        if (!id) return;
+        const ok = window.confirm(`Delete this reminder${desc ? `: \"${desc}\"` : ''}?`);
+        if (!ok) return;
+        const fd = new FormData(); fd.append('id', id);
+        const res = await fetch('reminder_delete.php', { method: 'POST', body: fd });
+        if (!res.ok) return;
+        try { await res.json(); } catch {}
         window.location.reload();
       });
     })();
