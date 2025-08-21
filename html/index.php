@@ -235,6 +235,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                                 >
                           Edit
                         </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger btn-delete-tx"
+                                data-id="<?= $txId ?>"
+                                data-date="<?= htmlspecialchars((string)$date) ?>"
+                                data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                                data-description="<?= htmlspecialchars((string)$desc) ?>">
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   <?php endforeach; ?>
@@ -440,6 +447,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (!res.ok) return; // api_error.js will show modal
           try { await res.json(); } catch {}
           modal && modal.hide();
+          window.location.reload();
+        });
+
+        // Delete transaction
+        document.addEventListener('click', async (e) => {
+          const del = e.target.closest('.btn-delete-tx');
+          if (!del) return;
+          e.preventDefault();
+          const id = del.dataset.id;
+          if (!id) return;
+          const desc = del.dataset.description || '';
+          const amt = del.dataset.amount || '';
+          const date = del.dataset.date || '';
+          const detail = [date, desc].filter(Boolean).join(' — ');
+          const msg = `Delete this transaction${detail ? `: \"${detail}\"` : ''}${amt ? ` (amount: ${amt})` : ''}?`;
+          const ok = window.confirm(msg);
+          if (!ok) return;
+          const fd = new FormData();
+          fd.append('id', id);
+          const res = await fetch('transaction_delete.php', { method: 'POST', body: fd });
+          if (!res.ok) return; // api_error.js will handle
+          try { await res.json(); } catch {}
           window.location.reload();
         });
       })();
