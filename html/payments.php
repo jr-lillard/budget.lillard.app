@@ -29,6 +29,19 @@ try {
     $monthLabel = $startObj->format('F Y');
     $prevMonth = $startObj->modify('first day of previous month')->format('Y-m');
     $nextMonth = $startObj->modify('first day of next month')->format('Y-m');
+    // Current month and year helpers
+    $currentMonthParam = date('Y-m');
+    $isCurrentMonth = ($monthParam === $currentMonthParam);
+    $selectedYear = (int)$startObj->format('Y');
+    $currentYear = (int)date('Y');
+    $yearStart = sprintf('%04d-01-01', $selectedYear);
+    if ($selectedYear < $currentYear) {
+        $yearEnd = sprintf('%04d-01-01', $selectedYear + 1);
+        $monthsInScope = 12;
+    } else {
+        $yearEnd = date('Y-m-01', strtotime('first day of next month'));
+        $monthsInScope = (int)date('n');
+    }
 
     // Base query: only transactions where description exactly 'Payment' within selected month
     $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source,
@@ -70,6 +83,19 @@ try {
     $postedRow = $postedStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
     $postedTotalAmount = (float)($postedRow['total'] ?? 0);
     $postedTotalCount = (int)($postedRow['cnt'] ?? 0);
+
+    // Year totals and monthly average for the selected year (current year is YTD)
+    $yearSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
+                FROM transactions t
+                WHERE t.description = ? AND t.`date` >= ? AND t.`date` < ?';
+    $yearParams = ['Payment', $yearStart, $yearEnd];
+    if ($filterAccountId > 0) { $yearSql .= ' AND t.account_id = ?'; $yearParams[] = $filterAccountId; }
+    $yearStmt = $pdo->prepare($yearSql);
+    $yearStmt->execute($yearParams);
+    $yearRow = $yearStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
+    $yearTotalAmount = (float)($yearRow['total'] ?? 0);
+    $yearTotalCount = (int)($yearRow['cnt'] ?? 0);
+    $yearMonthlyAvg = $monthsInScope > 0 ? ($yearTotalAmount / $monthsInScope) : 0.0;
 
     // Accounts for filter (last 6 months of activity to be generous)
     $accSql = "SELECT DISTINCT a.id, a.name
@@ -125,12 +151,21 @@ try {
         <?php
           $prevUrl = 'payments.php?month=' . urlencode($prevMonth) . ($filterAccountId ? ('&account_id=' . (int)$filterAccountId) : '');
           $nextUrl = 'payments.php?month=' . urlencode($nextMonth) . ($filterAccountId ? ('&account_id=' . (int)$filterAccountId) : '');
+          $currentUrl = 'payments.php?month=' . urlencode($currentMonthParam) . ($filterAccountId ? ('&account_id=' . (int)$filterAccountId) : '');
+          $allowNext = ($monthParam < $currentMonthParam);
         ?>
         <div class="d-flex align-items-center gap-2">
           <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($prevUrl) ?>" title="Previous month">←</a>
           <span class="text-body-secondary">Payments for</span>
           <strong><?= htmlspecialchars($monthLabel) ?></strong>
-          <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($nextUrl) ?>" title="Next month">→</a>
+          <?php if ($allowNext): ?>
+            <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($nextUrl) ?>" title="Next month">→</a>
+          <?php else: ?>
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Already at current month">→</button>
+          <?php endif; ?>
+          <?php if (!$isCurrentMonth): ?>
+            <a class="btn btn-sm btn-outline-primary" href="<?= htmlspecialchars($currentUrl) ?>" title="Jump to current month">Current Month</a>
+          <?php endif; ?>
         </div>
         <form class="d-flex align-items-center gap-2" method="get" action="">
           <input type="hidden" name="month" value="<?= htmlspecialchars($monthParam) ?>">
@@ -154,6 +189,10 @@ try {
           $sumFmt = number_format($totalAmount, 2);
           $postedClass = $postedTotalAmount < 0 ? 'text-danger' : 'text-success';
           $postedFmt = number_format($postedTotalAmount, 2);
+          $yearClass = $yearTotalAmount < 0 ? 'text-danger' : 'text-success';
+          $yearFmt = number_format($yearTotalAmount, 2);
+          $avgClass = $yearMonthlyAvg < 0 ? 'text-danger' : 'text-success';
+          $avgFmt = number_format($yearMonthlyAvg, 2);
         ?>
         <span class="text-body-secondary">Month total<?= isset($filterAccountId) && $filterAccountId ? ' (filtered by account)' : '' ?>:</span>
         <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
@@ -161,6 +200,11 @@ try {
         <span class="text-body-secondary ms-3">Posted total:</span>
         <strong class="<?= $postedClass ?>">$<?= $postedFmt ?></strong>
         <span class="text-body-secondary ms-2">(<?= (int)$postedTotalCount ?> posted)</span>
+        <br>
+        <span class="text-body-secondary">Year total (<?= (int)$selectedYear ?>):</span>
+        <strong class="<?= $yearClass ?>">$<?= $yearFmt ?></strong>
+        <span class="text-body-secondary ms-3">Monthly average:</span>
+        <strong class="<?= $avgClass ?>">$<?= $avgFmt ?></strong>
       </div>
 
       <?php if ($error !== ''): ?>
