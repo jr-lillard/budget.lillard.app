@@ -135,6 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 + Add Transaction
               </button>
               <a class="btn btn-sm btn-outline-secondary" href="reminders.php">Reminders</a>
+              <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
             </div>
             <form class="d-flex align-items-center gap-2" method="get" action="">
               <label for="filterAccount" class="form-label mb-0">Account</label>
