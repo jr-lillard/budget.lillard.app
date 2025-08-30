@@ -21,6 +21,15 @@ try {
     $limit = 100; // show more by default for payments
     $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
 
+    // Month selection (YYYY-MM), defaults to current month
+    $rawMonth = isset($_GET['month']) ? (string)$_GET['month'] : date('Y-m');
+    $monthParam = preg_match('/^\d{4}-\d{2}$/', $rawMonth) ? $rawMonth : date('Y-m');
+    $startDate = $monthParam . '-01';
+    $startObj = date_create_immutable($startDate) ?: new DateTimeImmutable(date('Y-m-01'));
+    $monthLabel = $startObj->format('F Y');
+    $prevMonth = $startObj->modify('first day of previous month')->format('Y-m');
+    $nextMonth = $startObj->modify('first day of next month')->format('Y-m');
+
     // Base query: only transactions where description exactly 'Payment' within selected month
     $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source,
                    t.account_id, a.name AS account_name
