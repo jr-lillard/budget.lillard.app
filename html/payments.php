@@ -26,8 +26,8 @@ try {
                    t.account_id, a.name AS account_name
             FROM transactions t
             LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.description = \"Payment\"';
-    $params = [];
+            WHERE t.description = ?';
+    $params = ['Payment'];
     if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; $params[] = $filterAccountId; }
     $sql .= ' ORDER BY t.posted ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
     $params[] = $limit;
@@ -37,8 +37,8 @@ try {
 
     // Totals (not limited) for payments
     $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
-               FROM transactions t WHERE t.description = \"Payment\"';
-    $sumParams = [];
+               FROM transactions t WHERE t.description = ?';
+    $sumParams = ['Payment'];
     if ($filterAccountId > 0) { $sumSql .= ' AND t.account_id = ?'; $sumParams[] = $filterAccountId; }
     $sumStmt = $pdo->prepare($sumSql);
     $sumStmt->execute($sumParams);
@@ -48,8 +48,8 @@ try {
 
     // Posted-only totals
     $postedSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
-                  FROM transactions t WHERE t.description = \"Payment\" AND t.posted = 1';
-    $postedParams = [];
+                  FROM transactions t WHERE t.description = ? AND t.posted = 1';
+    $postedParams = ['Payment'];
     if ($filterAccountId > 0) { $postedSql .= ' AND t.account_id = ?'; $postedParams[] = $filterAccountId; }
     $postedStmt = $pdo->prepare($postedSql);
     $postedStmt->execute($postedParams);
@@ -419,4 +419,3 @@ try {
     </script>
   </body>
   </html>
-
