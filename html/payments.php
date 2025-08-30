@@ -21,13 +21,14 @@ try {
     $limit = 100; // show more by default for payments
     $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
 
-    // Base query: only transactions where description exactly 'Payment'
+    // Base query: only transactions where description exactly 'Payment' within selected month
     $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source,
                    t.account_id, a.name AS account_name
             FROM transactions t
             LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.description = ?';
-    $params = ['Payment'];
+            WHERE t.description = ?
+              AND t.`date` >= ? AND t.`date` < DATE_ADD(?, INTERVAL 1 MONTH)';
+    $params = ['Payment', $startDate, $startDate];
     if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; $params[] = $filterAccountId; }
     $sql .= ' ORDER BY t.posted ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
     $params[] = $limit;
@@ -35,10 +36,12 @@ try {
     $stmt->execute($params);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-    // Totals (not limited) for payments
+    // Totals (not limited) for payments in selected month
     $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
-               FROM transactions t WHERE t.description = ?';
-    $sumParams = ['Payment'];
+               FROM transactions t
+               WHERE t.description = ?
+                 AND t.`date` >= ? AND t.`date` < DATE_ADD(?, INTERVAL 1 MONTH)';
+    $sumParams = ['Payment', $startDate, $startDate];
     if ($filterAccountId > 0) { $sumSql .= ' AND t.account_id = ?'; $sumParams[] = $filterAccountId; }
     $sumStmt = $pdo->prepare($sumSql);
     $sumStmt->execute($sumParams);
@@ -46,10 +49,12 @@ try {
     $totalAmount = (float)($sumRow['total'] ?? 0);
     $totalCount = (int)($sumRow['cnt'] ?? 0);
 
-    // Posted-only totals
+    // Posted-only totals for selected month
     $postedSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
-                  FROM transactions t WHERE t.description = ? AND t.posted = 1';
-    $postedParams = ['Payment'];
+                  FROM transactions t
+                  WHERE t.description = ? AND t.posted = 1
+                    AND t.`date` >= ? AND t.`date` < DATE_ADD(?, INTERVAL 1 MONTH)';
+    $postedParams = ['Payment', $startDate, $startDate];
     if ($filterAccountId > 0) { $postedSql .= ' AND t.account_id = ?'; $postedParams[] = $filterAccountId; }
     $postedStmt = $pdo->prepare($postedSql);
     $postedStmt->execute($postedParams);
@@ -108,8 +113,18 @@ try {
 
     <main class="container my-4">
       <div class="d-flex align-items-center justify-content-between mb-2 gap-2 flex-wrap">
-        <div class="text-body-secondary">Showing transactions with description exactly "Payment".</div>
+        <?php
+          $prevUrl = 'payments.php?month=' . urlencode($prevMonth) . ($filterAccountId ? ('&account_id=' . (int)$filterAccountId) : '');
+          $nextUrl = 'payments.php?month=' . urlencode($nextMonth) . ($filterAccountId ? ('&account_id=' . (int)$filterAccountId) : '');
+        ?>
+        <div class="d-flex align-items-center gap-2">
+          <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($prevUrl) ?>" title="Previous month">←</a>
+          <span class="text-body-secondary">Payments for</span>
+          <strong><?= htmlspecialchars($monthLabel) ?></strong>
+          <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($nextUrl) ?>" title="Next month">→</a>
+        </div>
         <form class="d-flex align-items-center gap-2" method="get" action="">
+          <input type="hidden" name="month" value="<?= htmlspecialchars($monthParam) ?>">
           <label for="filterAccount" class="form-label mb-0">Account</label>
           <select id="filterAccount" name="account_id" class="form-select form-select-sm" style="min-width: 240px;">
             <option value="">All accounts</option>
@@ -119,7 +134,7 @@ try {
           </select>
           <button type="submit" class="btn btn-sm btn-primary">Filter</button>
           <?php if (!empty($_GET)): ?>
-            <a class="btn btn-sm btn-outline-secondary" href="payments.php">Clear</a>
+            <a class="btn btn-sm btn-outline-secondary" href="payments.php?month=<?= htmlspecialchars(date('Y-m')) ?>">Clear</a>
           <?php endif; ?>
         </form>
       </div>
@@ -131,7 +146,7 @@ try {
           $postedClass = $postedTotalAmount < 0 ? 'text-danger' : 'text-success';
           $postedFmt = number_format($postedTotalAmount, 2);
         ?>
-        <span class="text-body-secondary">Total payments<?= isset($filterAccountId) && $filterAccountId ? ' for account' : '' ?>:</span>
+        <span class="text-body-secondary">Month total<?= isset($filterAccountId) && $filterAccountId ? ' (filtered by account)' : '' ?>:</span>
         <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
         <span class="text-body-secondary ms-2">(<?= (int)$totalCount ?> transactions)</span>
         <span class="text-body-secondary ms-3">Posted total:</span>
@@ -157,7 +172,7 @@ try {
               </tr>
             </thead>
             <tbody>
-              <?php $currentDate = null; $pendingHeaderShown = false; foreach ($rows as $row): ?>
+              <?php $pendingHeaderShown = false; foreach ($rows as $row): ?>
                 <?php
                   $date = $row['date'] ?? '';
                   $acct = $row['account_name'] ?? '';
@@ -168,22 +183,10 @@ try {
                   $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                   $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                   $txId = (int)($row['id'] ?? 0);
-                  $dateCell = '';
-                  if (!$postedBool) {
-                    if (!$pendingHeaderShown) {
-                      echo '<tr class="table-active"><td colspan="6">Pending</td></tr>';
-                      $pendingHeaderShown = true;
-                    }
-                  } else {
-                    $isNewGroup = ($date !== $currentDate);
-                    if ($isNewGroup) {
-                      $label = $date;
-                      $ts = strtotime((string)$date);
-                      if ($ts !== false) { $label = date('l, F j, Y', $ts); }
-                      echo '<tr class="table-active"><td colspan="6">' . htmlspecialchars($label) . '</td></tr>';
-                      $currentDate = $date;
-                      $dateCell = htmlspecialchars((string)$date);
-                    }
+                  $dateCell = $date !== '' ? htmlspecialchars((string)$date) : '';
+                  if (!$postedBool && !$pendingHeaderShown) {
+                    echo '<tr class="table-active"><td colspan="6">Pending</td></tr>';
+                    $pendingHeaderShown = true;
                   }
                 ?>
                 <tr data-tx-id="<?= $txId ?>">
