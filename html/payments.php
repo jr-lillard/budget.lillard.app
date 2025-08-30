@@ -42,6 +42,11 @@ try {
         $yearEnd = date('Y-m-01', strtotime('first day of next month'));
         $monthsInScope = (int)date('n');
     }
+    // Previous year window (always full year)
+    $prevYearNum = $selectedYear - 1;
+    $prevYearStart = sprintf('%04d-01-01', $prevYearNum);
+    $prevYearEnd = sprintf('%04d-01-01', $prevYearNum + 1);
+    $prevMonthsInScope = 12;
 
     // Base query: only transactions where description exactly 'Payment' within selected month
     $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source,
@@ -96,6 +101,19 @@ try {
     $yearTotalAmount = (float)($yearRow['total'] ?? 0);
     $yearTotalCount = (int)($yearRow['cnt'] ?? 0);
     $yearMonthlyAvg = $monthsInScope > 0 ? ($yearTotalAmount / $monthsInScope) : 0.0;
+
+    // Previous year totals and average
+    $prevYearSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
+                    FROM transactions t
+                    WHERE t.description = ? AND t.`date` >= ? AND t.`date` < ?';
+    $prevYearParams = ['Payment', $prevYearStart, $prevYearEnd];
+    if ($filterAccountId > 0) { $prevYearSql .= ' AND t.account_id = ?'; $prevYearParams[] = $filterAccountId; }
+    $prevYearStmt = $pdo->prepare($prevYearSql);
+    $prevYearStmt->execute($prevYearParams);
+    $prevYearRow = $prevYearStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
+    $prevYearTotalAmount = (float)($prevYearRow['total'] ?? 0);
+    $prevYearTotalCount = (int)($prevYearRow['cnt'] ?? 0);
+    $prevYearMonthlyAvg = $prevMonthsInScope > 0 ? ($prevYearTotalAmount / $prevMonthsInScope) : 0.0;
 
     // Accounts for filter (last 6 months of activity to be generous)
     $accSql = "SELECT DISTINCT a.id, a.name
@@ -193,6 +211,10 @@ try {
           $yearFmt = number_format($yearTotalAmount, 2);
           $avgClass = $yearMonthlyAvg < 0 ? 'text-danger' : 'text-success';
           $avgFmt = number_format($yearMonthlyAvg, 2);
+          $prevYearClass = $prevYearTotalAmount < 0 ? 'text-danger' : 'text-success';
+          $prevYearFmt = number_format($prevYearTotalAmount, 2);
+          $prevAvgClass = $prevYearMonthlyAvg < 0 ? 'text-danger' : 'text-success';
+          $prevAvgFmt = number_format($prevYearMonthlyAvg, 2);
         ?>
         <span class="text-body-secondary">Month total<?= isset($filterAccountId) && $filterAccountId ? ' (filtered by account)' : '' ?>:</span>
         <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
@@ -205,6 +227,11 @@ try {
         <strong class="<?= $yearClass ?>">$<?= $yearFmt ?></strong>
         <span class="text-body-secondary ms-3">Monthly average:</span>
         <strong class="<?= $avgClass ?>">$<?= $avgFmt ?></strong>
+        <br>
+        <span class="text-body-secondary">Previous year total (<?= (int)$prevYearNum ?>):</span>
+        <strong class="<?= $prevYearClass ?>">$<?= $prevYearFmt ?></strong>
+        <span class="text-body-secondary ms-3">Monthly average:</span>
+        <strong class="<?= $prevAvgClass ?>">$<?= $prevAvgFmt ?></strong>
       </div>
 
       <?php if ($error !== ''): ?>
