@@ -62,25 +62,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         <?php
           try {
             $pdo = get_mysql_connection();
+            // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
+            try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
             $limit = 50; // recent rows to show
             $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
 
-            $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source, 
+            $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source, 
                            t.account_id, a.name AS account_name
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id';
             $params = [];
             if ($filterAccountId > 0) { $sql .= ' WHERE t.account_id = ?'; $params[] = $filterAccountId; }
-            $sql .= ' ORDER BY t.posted ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
+            $sql .= ' ORDER BY COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
             $params[] = $limit;
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-            // Compute total sum across all matching transactions (not limited)
-            $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t';
+            // Compute total sum across all matching transactions (exclude scheduled), not limited
+            $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t WHERE COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) <> 0';
             $sumParams = [];
-            if ($filterAccountId > 0) { $sumSql .= ' WHERE t.account_id = ?'; $sumParams[] = $filterAccountId; }
+            if ($filterAccountId > 0) { $sumSql .= ' AND t.account_id = ?'; $sumParams[] = $filterAccountId; }
             $sumStmt = $pdo->prepare($sumSql);
             $sumStmt->execute($sumParams);
             $sumRow = $sumStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
@@ -96,6 +98,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $postedRow = $postedStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'cnt' => 0];
             $postedTotalAmount = (float)($postedRow['total'] ?? 0);
             $postedTotalCount = (int)($postedRow['cnt'] ?? 0);
+
+            // Scheduled sum (for projected balance) from transactions.status = 0
+            $schedSumSql = 'SELECT COALESCE(SUM(t.amount),0) AS total FROM transactions t WHERE COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0';
+            $schedSumParams = [];
+            if ($filterAccountId > 0) { $schedSumSql .= ' AND t.account_id = ?'; $schedSumParams[] = $filterAccountId; }
+            $schedSumStmt = $pdo->prepare($schedSumSql);
+            $schedSumStmt->execute($schedSumParams);
+            $schedTotalAmount = (float)($schedSumStmt->fetchColumn() ?: 0);
 
             // Accounts with activity in last 3 months (id => name)
             $accSql = "SELECT DISTINCT a.id, a.name
@@ -157,6 +167,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $sumFmt = number_format($totalAmount, 2);
               $postedClass = $postedTotalAmount < 0 ? 'text-danger' : 'text-success';
               $postedFmt = number_format($postedTotalAmount, 2);
+              $projectedWithSched = ($totalAmount ?? 0) + ($schedTotalAmount ?? 0);
+              $projClass = $projectedWithSched < 0 ? 'text-danger' : 'text-success';
+              $projFmt = number_format($projectedWithSched, 2);
             ?>
             <span class="text-body-secondary">Total<?= $filterAccountId ? ' for account' : '' ?>:</span>
             <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
@@ -164,6 +177,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             <span class="text-body-secondary ms-3">Posted total:</span>
             <strong class="<?= $postedClass ?>">$<?= $postedFmt ?></strong>
             <span class="text-body-secondary ms-2">(<?= (int)$postedTotalCount ?> posted)</span>
+            <br>
+            <span class="text-body-secondary">Projected incl. scheduled:</span>
+            <strong class="<?= $projClass ?>">$<?= $projFmt ?></strong>
           </div>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
@@ -183,45 +199,126 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   </tr>
                 </thead>
                 <tbody>
-                  <?php $currentDate = null; foreach ($recentTx as $row): ?>
-                    <?php
+                  <?php
+                    // Partition rows by status (fallback to posted for legacy rows)
+                    $scheduledRows = [];
+                    $pendingRows = [];
+                    $postedRows = [];
+                    foreach ($recentTx as $row) {
+                      $status = $row['status'] ?? null;
+                      $posted = $row['posted'] ?? '';
+                      $statusNorm = ($status === null || $status === '') ? (($posted === 1 || (string)$posted === '1') ? 2 : 1) : (int)$status;
+                      if ($statusNorm === 0) $scheduledRows[] = $row;
+                      elseif ($statusNorm === 2) $postedRows[] = $row; else $pendingRows[] = $row;
+                    }
+                  ?>
+                  <?php if (!empty($scheduledRows)): ?>
+                    <tr class="table-active"><td colspan="6">Scheduled</td></tr>
+                    <?php foreach ($scheduledRows as $row): ?>
+                      <?php
+                        $date = $row['date'] ?? '';
+                        $acct = $row['account_name'] ?? '';
+                        $desc = $row['description'] ?? '';
+                        $amt = $row['amount'];
+                        $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
+                        $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
+                        $txId = (int)($row['id'] ?? 0);
+                      ?>
+                      <tr data-tx-id="<?= $txId ?>">
+                        <td></td>
+                        <td><?= htmlspecialchars((string)$acct) ?></td>
+                        <td class="text-truncate" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
+                        <td class="text-center"></td>
+                        <td class="text-end">
+                          <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
+                                  data-id="<?= $txId ?>"
+                                  data-date="<?= htmlspecialchars((string)$date) ?>"
+                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                                  data-account="<?= htmlspecialchars((string)$acct) ?>"
+                                  data-description="<?= htmlspecialchars((string)$desc) ?>"
+                                  data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                                  data-status="0"
+                                  data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
+                                  >Edit</button>
+                          <button type="button" class="btn btn-sm btn-outline-danger btn-delete-tx"
+                                  data-id="<?= $txId ?>"
+                                  data-date="<?= htmlspecialchars((string)$date) ?>"
+                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                                  data-description="<?= htmlspecialchars((string)$desc) ?>">Delete</button>
+                        </td>
+                      </tr>
+                    <?php endforeach; ?>
+                  <?php endif; ?>
+                  <?php if (!empty($pendingRows)): ?>
+                    <tr class="table-active"><td colspan="6">Pending</td></tr>
+                    <?php foreach ($pendingRows as $row): ?>
+                      <?php
+                        $date = $row['date'] ?? '';
+                        $acct = $row['account_name'] ?? '';
+                        $desc = $row['description'] ?? '';
+                        $amt = $row['amount'];
+                        $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
+                        $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
+                        $txId = (int)($row['id'] ?? 0);
+                      ?>
+                      <tr data-tx-id="<?= $txId ?>">
+                        <td></td>
+                        <td><?= htmlspecialchars((string)$acct) ?></td>
+                        <td class="text-truncate" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
+                        <td class="text-center"></td>
+                        <td class="text-end">
+                          <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
+                                  data-id="<?= $txId ?>"
+                                  data-date="<?= htmlspecialchars((string)$date) ?>"
+                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                                  data-account="<?= htmlspecialchars((string)$acct) ?>"
+                                  data-description="<?= htmlspecialchars((string)$desc) ?>"
+                                  data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                                  data-status="1"
+                                  data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
+                                  >
+                            Edit
+                          </button>
+                          <button type="button" class="btn btn-sm btn-outline-danger btn-delete-tx"
+                                  data-id="<?= $txId ?>"
+                                  data-date="<?= htmlspecialchars((string)$date) ?>"
+                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                                  data-description="<?= htmlspecialchars((string)$desc) ?>">
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    <?php endforeach; endif; ?>
+                  <?php if (!empty($postedRows)):
+                    $currentDate = null;
+                    foreach ($postedRows as $row):
                       $date = $row['date'] ?? '';
                       $acct = $row['account_name'] ?? '';
                       $desc = $row['description'] ?? '';
                       $amt = $row['amount'];
-                      $posted = $row['posted'] ?? '';
-                      $postedBool = (string)$posted === '1' || $posted === 1;
                       $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                       $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                       $txId = (int)($row['id'] ?? 0);
-                      // Pending section first (no date), then posted grouped by day
+                      $isNewGroup = ($date !== $currentDate);
                       $dateCell = '';
-                      if (!$postedBool) {
-                        if (!isset($pendingHeaderShown) || !$pendingHeaderShown) {
-                          echo '<tr class="table-active"><td colspan="6">Pending</td></tr>';
-                          $pendingHeaderShown = true;
-                        }
-                      } else {
-                        $isNewGroup = ($date !== $currentDate);
-                        if ($isNewGroup) {
-                          $label = $date;
-                          $ts = strtotime((string)$date);
-                          if ($ts !== false) { $label = date('l, F j, Y', $ts); }
-                          echo '<tr class="table-active"><td colspan="6">' . htmlspecialchars($label) . '</td></tr>';
-                          $currentDate = $date;
-                          $dateCell = htmlspecialchars((string)$date);
-                        }
+                      if ($isNewGroup) {
+                        $label = $date;
+                        $ts = strtotime((string)$date);
+                        if ($ts !== false) { $label = date('l, F j, Y', $ts); }
+                        echo '<tr class="table-active"><td colspan="6">' . htmlspecialchars($label) . '</td></tr>';
+                        $currentDate = $date;
+                        $dateCell = htmlspecialchars((string)$date);
                       }
-                    ?>
+                  ?>
                     <tr data-tx-id="<?= $txId ?>">
                       <td><?= $dateCell ?></td>
                       <td><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
                       <td class="text-center">
-                        <?php if ($postedBool): ?>
-                          <span class="text-success fs-4" title="Posted" aria-label="Posted">✓</span>
-                        <?php endif; ?>
+                        <span class="text-success fs-4" title="Posted" aria-label="Posted">✓</span>
                       </td>
                       <td class="text-end">
                         <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
@@ -231,7 +328,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                                 data-account="<?= htmlspecialchars((string)$acct) ?>"
                                 data-description="<?= htmlspecialchars((string)$desc) ?>"
                                 data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                                data-posted="<?= htmlspecialchars((string)$posted) ?>"
+                                data-status="2"
                                 data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
                                 >
                           Edit
@@ -245,7 +342,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         </button>
                       </td>
                     </tr>
-                  <?php endforeach; ?>
+                  <?php endforeach; endif; ?>
                 </tbody>
               </table>
             </div>
@@ -317,13 +414,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <label class="form-label">Check #</label>
                   <input type="text" class="form-control" name="check_no" id="txCheck">
                 </div>
-                <div class="col-4 d-flex align-items-end">
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" role="switch" id="txPosted" name="posted">
-                    <label class="form-check-label" for="txPosted">Posted</label>
-                  </div>
+                <div class="col-4">
+                  <label class="form-label">Status</label>
+                  <select class="form-select" name="status" id="txStatus">
+                    <option value="0">Scheduled</option>
+                    <option value="1" selected>Pending</option>
+                    <option value="2">Posted</option>
+                  </select>
                 </div>
-                </div>
+              </div>
               </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -397,9 +496,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription', btn.dataset.description);
           setv('txCheck', btn.dataset.check);
-          // Posted checkbox
-          const postedEl = g('txPosted');
-          if (postedEl) postedEl.checked = (btn.dataset.posted === '1');
+          // Status select (0=scheduled,1=pending,2=posted)
+          const statusEl = g('txStatus');
+          if (statusEl) statusEl.value = (btn.dataset.status ?? '1');
           // Category/Tags removed from UI; guard against older attributes
           setv('txCategory', btn.dataset.category);
           setv('txTags', btn.dataset.tags);
@@ -430,7 +529,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription','');
           setv('txCheck','');
-          const postedEl2 = g('txPosted'); if (postedEl2) postedEl2.checked = false;
+          const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
           modal && modal.show();
         });
         // Toggle new account input visibility on select change
