@@ -163,6 +163,33 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
             <div class="mb-2">
               <label class="form-label">Frequency</label>
               <input type="text" class="form-control" name="frequency" id="remFrequency" placeholder="e.g., Monthly">
+              <div class="form-text">Existing freeform frequency (unchanged on save).</div>
+            </div>
+            <div class="border rounded p-2 mb-2">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <label class="form-label mb-0">Exact Frequency (preview only)</label>
+                <span class="badge text-bg-secondary">Does not save yet</span>
+              </div>
+              <div class="row g-2 align-items-end">
+                <div class="col-auto">
+                  <label class="form-label">Repeat every</label>
+                  <input type="number" min="1" step="1" class="form-control" id="remFreqEvery" value="1">
+                </div>
+                <div class="col-auto">
+                  <label class="form-label">Unit</label>
+                  <select class="form-select" id="remFreqUnit">
+                    <option value="days">day(s)</option>
+                    <option value="weeks">week(s)</option>
+                    <option value="months" selected>month(s)</option>
+                    <option value="years">year(s)</option>
+                    <option value="semi-monthly">semi-monthly</option>
+                  </select>
+                </div>
+                <div class="col-auto">
+                  <div class="form-text" id="remFreqExample">Example: every 1 month</div>
+                </div>
+              </div>
+              <div class="mt-2 small" id="remFreqPreview">Next due preview: —</div>
             </div>
           </div>
           <div class="modal-footer">
@@ -267,6 +294,9 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         }
         setv('remDescription', row.dataset.description || '');
         setv('remFrequency', row.dataset.frequency || '');
+        // Initialize exact frequency UI from freeform
+        initExactFrequencyFromFreeform(row.dataset.frequency || '');
+        updateExactExampleAndPreview();
         modal && modal.show();
       }
 
@@ -303,6 +333,10 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         setv('remAmount','');
         setv('remDescription','');
         setv('remFrequency','');
+        // Reset exact frequency to default (every 1 month)
+        const ev = document.getElementById('remFreqEvery'); if (ev) ev.value = '1';
+        const un = document.getElementById('remFreqUnit'); if (un) un.value = 'months';
+        updateExactExampleAndPreview();
         const keep = g('remAccountKeep'); if (keep) keep.value = '';
         const sel = g('remAccountSelect');
         const newInput = g('remAccountNew');
@@ -353,7 +387,7 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         window.location.reload();
       });
 
-      // Date rolling helper based on frequency
+      // Date rolling helper based on frequency (freeform)
       function rollForwardDate(dateStr, freqStr){
         if (!dateStr) return dateStr;
         const d = new Date(dateStr + 'T00:00:00');
@@ -384,6 +418,92 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         }
         return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
       }
+
+      // Exact frequency helpers (preview only)
+      function initExactFrequencyFromFreeform(freqStr){
+        const f = (freqStr || '').toLowerCase();
+        const ev = document.getElementById('remFreqEvery');
+        const un = document.getElementById('remFreqUnit');
+        if (!ev || !un) return;
+        let every = 1; let unit = 'months';
+        if (f.includes('semi') && f.includes('month')) { every = 1; unit = 'semi-monthly'; }
+        else if (f.includes('biweek') || f.includes('every 2 week')) { every = 2; unit = 'weeks'; }
+        else if (f.includes('quarter')) { every = 3; unit = 'months'; }
+        else if (f.includes('year') || f.includes('annual')) { every = 1; unit = 'years'; }
+        else {
+          const m = f.match(/(\d+)\s*(day|week|month|year)/);
+          if (m) {
+            every = Math.max(1, parseInt(m[1], 10) || 1);
+            const u = m[2];
+            unit = (u === 'day') ? 'days' : (u + 's');
+          } else if (f.includes('week')) { every = 1; unit = 'weeks'; }
+          else if (f.includes('month')) { every = 1; unit = 'months'; }
+          else if (f.includes('day')) { every = 1; unit = 'days'; }
+        }
+        ev.value = String(every);
+        un.value = unit;
+        // Disable/enable count for semi-monthly
+        ev.disabled = (unit === 'semi-monthly');
+      }
+
+      function rollForwardDateFromExact(dateStr, everyStr, unit){
+        if (!dateStr) return dateStr;
+        const d = new Date(dateStr + 'T00:00:00');
+        if (isNaN(d.getTime())) return dateStr;
+        let every = parseInt(everyStr, 10);
+        if (!isFinite(every) || every < 1) every = 1;
+        const addDays = (n)=>{ d.setDate(d.getDate()+n); };
+        const addMonths = (n)=>{ const day=d.getDate(); d.setMonth(d.getMonth()+n); if (d.getDate()!==day) { d.setDate(0); } };
+        const pad2=(n)=> String(n).padStart(2,'0');
+        switch (unit) {
+          case 'days': addDays(1 * every); break;
+          case 'weeks': addDays(7 * every); break;
+          case 'months': addMonths(1 * every); break;
+          case 'years': d.setFullYear(d.getFullYear() + 1 * every); break;
+          case 'semi-monthly':
+            const day = d.getDate();
+            if (day < 15) { d.setDate(15); }
+            else { d.setMonth(d.getMonth()+1); d.setDate(1); }
+            break;
+          default: addMonths(1); break;
+        }
+        return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+      }
+
+      function updateExactExampleAndPreview(){
+        const ev = document.getElementById('remFreqEvery');
+        const un = document.getElementById('remFreqUnit');
+        const ex = document.getElementById('remFreqExample');
+        const pv = document.getElementById('remFreqPreview');
+        const due = g('remDue')?.value || '';
+        if (!ev || !un) return;
+        const unit = un.value;
+        const every = ev.value;
+        ev.disabled = (unit === 'semi-monthly');
+        if (ex) {
+          const prettyUnit = (unit === 'semi-monthly') ? 'semi-monthly' : `${every} ${unit.replace(/s$/, '')}${(parseInt(every,10)===1 && unit!=='semi-monthly')?'':'s'}`;
+          ex.textContent = `Example: every ${prettyUnit}`;
+        }
+        if (pv) {
+          if (due) {
+            const next = rollForwardDateFromExact(due, every, unit);
+            try {
+              const dt = new Date(next + 'T00:00:00');
+              const fmt = dt.toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+              pv.textContent = `Next due preview: ${fmt}`;
+            } catch { pv.textContent = `Next due preview: ${next}`; }
+          } else {
+            pv.textContent = 'Next due preview: —';
+          }
+        }
+      }
+
+      // Wire changes
+      ['remFreqEvery','remFreqUnit','remDue'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', updateExactExampleAndPreview);
+        if (el) el.addEventListener('change', updateExactExampleAndPreview);
+      });
 
       // Process flow modal
       const pModalEl = document.getElementById('processTxModal');
