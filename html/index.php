@@ -40,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
   </head>
   <body>
     <nav class="navbar bg-body-tertiary sticky-top">
@@ -194,7 +195,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <th scope="col">Account</th>
                     <th scope="col">Description</th>
                     <th scope="col" class="text-end">Amount</th>
-                    <th scope="col">Posted</th>
                     <th scope="col" class="text-end">Actions</th>
                   </tr>
                 </thead>
@@ -213,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     }
                   ?>
                   <?php if (!empty($scheduledRows)): ?>
-                    <tr class="table-active"><td colspan="6">Scheduled</td></tr>
+                    <tr class="table-active"><td colspan="5">Scheduled</td></tr>
                     <?php foreach ($scheduledRows as $row): ?>
                       <?php
                         $date = $row['date'] ?? '';
@@ -224,34 +224,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                       ?>
-                      <tr data-tx-id="<?= $txId ?>">
-                        <td></td>
-                        <td><?= htmlspecialchars((string)$acct) ?></td>
-                        <td class="text-truncate" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
-                        <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
-                        <td class="text-center"></td>
+                      <tr data-id="<?= $txId ?>"
+                          data-date="<?= htmlspecialchars((string)$date) ?>"
+                          data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                          data-account="<?= htmlspecialchars((string)$acct) ?>"
+                          data-description="<?= htmlspecialchars((string)$desc) ?>"
+                          data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                          data-status="0"
+                          data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
+                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$date) ?></td>
+                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
-                          <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
-                                  data-id="<?= $txId ?>"
-                                  data-date="<?= htmlspecialchars((string)$date) ?>"
-                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                                  data-account="<?= htmlspecialchars((string)$acct) ?>"
-                                  data-description="<?= htmlspecialchars((string)$desc) ?>"
-                                  data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                                  data-status="0"
-                                  data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
-                                  >Edit</button>
-                          <button type="button" class="btn btn-sm btn-outline-danger btn-delete-tx"
-                                  data-id="<?= $txId ?>"
-                                  data-date="<?= htmlspecialchars((string)$date) ?>"
-                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                                  data-description="<?= htmlspecialchars((string)$desc) ?>">Delete</button>
+                          <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
+                              <i class="bi bi-three-dots"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                              <li><a class="dropdown-item tx-menu-edit" href="#">Edit</a></li>
+                              <li><a class="dropdown-item tx-menu-set-status" href="#" data-status="1">Mark Pending</a></li>
+                              <li><a class="dropdown-item tx-menu-set-status" href="#" data-status="2">Mark Posted</a></li>
+                              <li><hr class="dropdown-divider"></li>
+                              <li><a class="dropdown-item tx-menu-delete text-danger" href="#">Delete</a></li>
+                            </ul>
+                          </div>
                         </td>
                       </tr>
                     <?php endforeach; ?>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
-                    <tr class="table-active"><td colspan="6">Pending</td></tr>
+                    <tr class="table-active"><td colspan="5">Pending</td></tr>
                     <?php foreach ($pendingRows as $row): ?>
                       <?php
                         $date = $row['date'] ?? '';
@@ -262,32 +265,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                       ?>
-                      <tr data-tx-id="<?= $txId ?>">
-                        <td></td>
-                        <td><?= htmlspecialchars((string)$acct) ?></td>
-                        <td class="text-truncate" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
-                        <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
-                        <td class="text-center"></td>
+                      <tr data-id="<?= $txId ?>"
+                          data-date="<?= htmlspecialchars((string)$date) ?>"
+                          data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                          data-account="<?= htmlspecialchars((string)$acct) ?>"
+                          data-description="<?= htmlspecialchars((string)$desc) ?>"
+                          data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                          data-status="1"
+                          data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
+                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$date) ?></td>
+                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
-                          <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
-                                  data-id="<?= $txId ?>"
-                                  data-date="<?= htmlspecialchars((string)$date) ?>"
-                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                                  data-account="<?= htmlspecialchars((string)$acct) ?>"
-                                  data-description="<?= htmlspecialchars((string)$desc) ?>"
-                                  data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                                  data-status="1"
-                                  data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
-                                  >
-                            Edit
-                          </button>
-                          <button type="button" class="btn btn-sm btn-outline-danger btn-delete-tx"
-                                  data-id="<?= $txId ?>"
-                                  data-date="<?= htmlspecialchars((string)$date) ?>"
-                                  data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                                  data-description="<?= htmlspecialchars((string)$desc) ?>">
-                            Delete
-                          </button>
+                          <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
+                              <i class="bi bi-three-dots"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                              <li><a class="dropdown-item tx-menu-edit" href="#">Edit</a></li>
+                              <li><a class="dropdown-item tx-menu-set-status" href="#" data-status="2">Mark Posted</a></li>
+                              <li><hr class="dropdown-divider"></li>
+                              <li><a class="dropdown-item tx-menu-delete text-danger" href="#">Delete</a></li>
+                            </ul>
+                          </div>
                         </td>
                       </tr>
                     <?php endforeach; endif; ?>
@@ -307,39 +308,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $label = $date;
                         $ts = strtotime((string)$date);
                         if ($ts !== false) { $label = date('l, F j, Y', $ts); }
-                        echo '<tr class="table-active"><td colspan="6">' . htmlspecialchars($label) . '</td></tr>';
+                        echo '<tr class="table-active"><td colspan="5">' . htmlspecialchars($label) . '</td></tr>';
                         $currentDate = $date;
                         $dateCell = htmlspecialchars((string)$date);
                       }
                   ?>
-                    <tr data-tx-id="<?= $txId ?>">
-                      <td><?= $dateCell ?></td>
-                      <td><?= htmlspecialchars((string)$acct) ?></td>
-                      <td class="text-truncate" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
-                      <td class="text-end <?= $amtClass ?>"><?= $amtFmt ?></td>
-                      <td class="text-center">
-                        <span class="text-success fs-4" title="Posted" aria-label="Posted">✓</span>
-                      </td>
+                    <tr data-id="<?= $txId ?>"
+                        data-date="<?= htmlspecialchars((string)$date) ?>"
+                        data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
+                        data-account="<?= htmlspecialchars((string)$acct) ?>"
+                        data-description="<?= htmlspecialchars((string)$desc) ?>"
+                        data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                        data-status="2"
+                        data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
+                      <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
+                      <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                      <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
+                      <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                       <td class="text-end">
-                        <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-tx"
-                                data-id="<?= $txId ?>"
-                                data-date="<?= htmlspecialchars((string)$date) ?>"
-                                data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                                data-account="<?= htmlspecialchars((string)$acct) ?>"
-                                data-description="<?= htmlspecialchars((string)$desc) ?>"
-                                data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                                data-status="2"
-                                data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
-                                >
-                          Edit
-                        </button>
-                        <button type="button" class="btn btn-sm btn-outline-danger btn-delete-tx"
-                                data-id="<?= $txId ?>"
-                                data-date="<?= htmlspecialchars((string)$date) ?>"
-                                data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
-                                data-description="<?= htmlspecialchars((string)$desc) ?>">
-                          Delete
-                        </button>
+                        <div class="dropdown">
+                          <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
+                            <i class="bi bi-three-dots"></i>
+                          </button>
+                          <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item tx-menu-edit" href="#">Edit</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item tx-menu-delete text-danger" href="#">Delete</a></li>
+                          </ul>
+                        </div>
                       </td>
                     </tr>
                   <?php endforeach; endif; ?>
@@ -460,49 +456,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const form = document.getElementById('editTxForm');
         const g = (id) => document.getElementById(id);
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
-        document.addEventListener('click', (e) => {
-          const btn = e.target.closest('.btn-edit-tx');
-          if (!btn) return;
-          e.preventDefault();
-          setv('txId', btn.dataset.id);
-          setv('txDate', btn.dataset.date);
-          setv('txAmount', btn.dataset.amount);
+        function openEditFromRow(row){
+          if (!row) return;
+          setv('txId', row.dataset.id || '');
+          setv('txDate', row.dataset.date || '');
+          setv('txAmount', row.dataset.amount || '');
           // Account select / new
           const sel = g('txAccountSelect');
           const newInput = g('txAccountNew');
           if (sel) {
-            const acct = btn.dataset.account || '';
-            const acctId = btn.dataset.accountId || '';
+            const acct = row.dataset.account || '';
+            const acctId = row.dataset.accountId || '';
             const keep = g('txAccountKeep'); if (keep) keep.value = acctId || '';
-            // If option exists, select it, else choose __new__ and prefill new input
             let found = false;
             if (acct !== '') {
               for (const opt of sel.options) { if (opt.value === acct) { sel.value = acct; found = true; break; } }
             }
             if (!found) {
-              // Add current account as a temporary disabled option to show current value (kept)
               if (acct !== '') {
                 const opt = document.createElement('option');
-                opt.value = '__current__'; opt.textContent = `Current: ${acct}`; opt.disabled = true; opt.selected = true;
+                opt.value='__current__'; opt.textContent=`Current: ${acct}`; opt.disabled=true; opt.selected=true;
                 sel.insertBefore(opt, sel.firstChild);
-                if (newInput) { newInput.classList.add('d-none'); newInput.value = ''; }
+                if (newInput) { newInput.classList.add('d-none'); newInput.value=''; }
               } else {
-                sel.value = '__new__';
-                if (newInput) { newInput.classList.remove('d-none'); newInput.value = ''; }
+                sel.value='__new__';
+                if (newInput) { newInput.classList.remove('d-none'); newInput.value=''; }
               }
             } else if (newInput) {
-              newInput.classList.add('d-none'); newInput.value = '';
+              newInput.classList.add('d-none'); newInput.value='';
             }
           }
-          setv('txDescription', btn.dataset.description);
-          setv('txCheck', btn.dataset.check);
-          // Status select (0=scheduled,1=pending,2=posted)
-          const statusEl = g('txStatus');
-          if (statusEl) statusEl.value = (btn.dataset.status ?? '1');
-          // Category/Tags removed from UI; guard against older attributes
-          setv('txCategory', btn.dataset.category);
-          setv('txTags', btn.dataset.tags);
+          setv('txDescription', row.dataset.description || '');
+          setv('txCheck', row.dataset.check || '');
+          const statusEl = g('txStatus'); if (statusEl) statusEl.value = (row.dataset.status ?? '1');
           modal && modal.show();
+        }
+        // Clickable cells open edit
+        document.addEventListener('click', (e) => {
+          const cell = e.target.closest('.tx-click-edit');
+          if (!cell) return;
+          const row = cell.closest('tr');
+          if (!row) return;
+          e.preventDefault();
+          openEditFromRow(row);
+        });
+        // Menu: Edit
+        document.addEventListener('click', (e) => {
+          const a = e.target.closest('.tx-menu-edit');
+          if (!a) return;
+          const row = a.closest('tr');
+          if (!row) return;
+          e.preventDefault();
+          openEditFromRow(row);
         });
         // Add new transaction
         const addBtn = document.getElementById('addTxBtn');
@@ -550,24 +555,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           window.location.reload();
         });
 
-        // Delete transaction
+        // Menu: Change status
         document.addEventListener('click', async (e) => {
-          const del = e.target.closest('.btn-delete-tx');
-          if (!del) return;
+          const a = e.target.closest('.tx-menu-set-status');
+          if (!a) return;
           e.preventDefault();
-          const id = del.dataset.id;
-          if (!id) return;
-          const desc = del.dataset.description || '';
-          const amt = del.dataset.amount || '';
-          const date = del.dataset.date || '';
+          const row = a.closest('tr');
+          if (!row) return;
+          const id = row.dataset.id;
+          const status = a.dataset.status;
+          if (!id || typeof status === 'undefined') return;
+          const fd = new FormData();
+          fd.append('id', id);
+          fd.append('status', status);
+          const res = await fetch('transaction_status.php', { method:'POST', body: fd });
+          if (!res.ok) return;
+          try { await res.json(); } catch {}
+          window.location.reload();
+        });
+        // Menu: Delete
+        document.addEventListener('click', async (e) => {
+          const a = e.target.closest('.tx-menu-delete');
+          if (!a) return;
+          e.preventDefault();
+          const row = a.closest('tr');
+          if (!row) return;
+          const id = row.dataset.id;
+          const desc = row.dataset.description || '';
+          const amt = row.dataset.amount || '';
+          const date = row.dataset.date || '';
           const detail = [date, desc].filter(Boolean).join(' — ');
           const msg = `Delete this transaction${detail ? `: \"${detail}\"` : ''}${amt ? ` (amount: ${amt})` : ''}?`;
           const ok = window.confirm(msg);
           if (!ok) return;
           const fd = new FormData();
           fd.append('id', id);
-          const res = await fetch('transaction_delete.php', { method: 'POST', body: fd });
-          if (!res.ok) return; // api_error.js will handle
+          const res = await fetch('transaction_delete.php', { method:'POST', body: fd });
+          if (!res.ok) return;
           try { await res.json(); } catch {}
           window.location.reload();
         });
