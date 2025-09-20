@@ -162,26 +162,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               <?php endif; ?>
             </form>
           </div>
-          <div class="mb-3">
-            <?php
-              $sumClass = $totalAmount < 0 ? 'text-danger' : 'text-success';
-              $sumFmt = number_format($totalAmount, 2);
-              $postedClass = $postedTotalAmount < 0 ? 'text-danger' : 'text-success';
-              $postedFmt = number_format($postedTotalAmount, 2);
-              $projectedWithSched = ($totalAmount ?? 0) + ($schedTotalAmount ?? 0);
-              $projClass = $projectedWithSched < 0 ? 'text-danger' : 'text-success';
-              $projFmt = number_format($projectedWithSched, 2);
-            ?>
-            <span class="text-body-secondary">Total<?= $filterAccountId ? ' for account' : '' ?>:</span>
-            <strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong>
-            <span class="text-body-secondary ms-2">(<?= (int)$totalCount ?> transactions)</span>
-            <span class="text-body-secondary ms-3">Posted total:</span>
-            <strong class="<?= $postedClass ?>">$<?= $postedFmt ?></strong>
-            <span class="text-body-secondary ms-2">(<?= (int)$postedTotalCount ?> posted)</span>
-            <br>
-            <span class="text-body-secondary">Projected incl. scheduled:</span>
-            <strong class="<?= $projClass ?>">$<?= $projFmt ?></strong>
-          </div>
+          <?php
+            // Precompute classes and formatted values for section header totals
+            $sumClass = $totalAmount < 0 ? 'text-danger' : 'text-success';
+            $sumFmt = number_format($totalAmount, 2);
+            $postedClass = $postedTotalAmount < 0 ? 'text-danger' : 'text-success';
+            $postedFmt = number_format($postedTotalAmount, 2);
+            $projectedWithSched = ($totalAmount ?? 0) + ($schedTotalAmount ?? 0);
+            $projClass = $projectedWithSched < 0 ? 'text-danger' : 'text-success';
+            $projFmt = number_format($projectedWithSched, 2);
+          ?>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
           <?php elseif (empty($recentTx)): ?>
@@ -213,8 +203,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     }
                   ?>
                   <?php if (!empty($scheduledRows)): ?>
-                    <tr class="table-active"><td colspan="5">Scheduled</td></tr>
-                    <?php foreach ($scheduledRows as $row): ?>
+                    <tr class="table-active">
+                      <td>Scheduled</td>
+                      <td></td>
+                      <td></td>
+                      <td class="text-end"><strong class="<?= $projClass ?>">$<?= $projFmt ?></strong></td>
+                      <td></td>
+                    </tr>
+                    <?php $lastSchedDate = null; foreach ($scheduledRows as $row): ?>
                       <?php
                         $date = $row['date'] ?? '';
                         $acct = $row['account_name'] ?? '';
@@ -224,6 +220,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                       ?>
+                      <?php
+                        $dateCell = '';
+                        if ($date !== $lastSchedDate) { $dateCell = htmlspecialchars((string)$date); $lastSchedDate = $date; }
+                      ?>
                       <tr data-id="<?= $txId ?>"
                           data-date="<?= htmlspecialchars((string)$date) ?>"
                           data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
@@ -232,7 +232,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
-                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$date) ?></td>
+                        <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
@@ -254,8 +254,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <?php endforeach; ?>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
-                    <tr class="table-active"><td colspan="5">Pending</td></tr>
-                    <?php foreach ($pendingRows as $row): ?>
+                    <tr class="table-active">
+                      <td>Pending</td>
+                      <td></td>
+                      <td></td>
+                      <td class="text-end"><strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong></td>
+                      <td></td>
+                    </tr>
+                    <?php $lastPendDate = null; foreach ($pendingRows as $row): ?>
                       <?php
                         $date = $row['date'] ?? '';
                         $acct = $row['account_name'] ?? '';
@@ -265,6 +271,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                       ?>
+                      <?php
+                        $dateCell = '';
+                        if ($date !== $lastPendDate) { $dateCell = htmlspecialchars((string)$date); $lastPendDate = $date; }
+                      ?>
                       <tr data-id="<?= $txId ?>"
                           data-date="<?= htmlspecialchars((string)$date) ?>"
                           data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
@@ -273,7 +283,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
                           data-status="1"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
-                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$date) ?></td>
+                        <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
@@ -294,6 +304,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <?php endforeach; endif; ?>
                   <?php if (!empty($postedRows)):
                     $currentDate = null;
+                    $postedSummaryShown = false;
                     foreach ($postedRows as $row):
                       $date = $row['date'] ?? '';
                       $acct = $row['account_name'] ?? '';
@@ -308,7 +319,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $label = $date;
                         $ts = strtotime((string)$date);
                         if ($ts !== false) { $label = date('l, F j, Y', $ts); }
-                        echo '<tr class="table-active"><td colspan="5">' . htmlspecialchars($label) . '</td></tr>';
+                        echo '<tr class="table-active">'
+                           . '<td>' . htmlspecialchars($label) . '</td>'
+                           . '<td></td>'
+                           . '<td></td>'
+                           . '<td class="text-end">' . (!$postedSummaryShown ? ('<strong class="' . $postedClass . '">$' . $postedFmt . '</strong>') : '') . '</td>'
+                           . '<td></td>'
+                           . '</tr>';
+                        $postedSummaryShown = true;
                         $currentDate = $date;
                         $dateCell = htmlspecialchars((string)$date);
                       }
