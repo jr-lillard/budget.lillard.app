@@ -14,11 +14,86 @@ $rows = [];
 
 try {
     $pdo = get_mysql_connection();
-$sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.updated_at_source, r.account_id, a.name AS account_name
+    // Ensure structured frequency columns exist
+    try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
+    try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
+    $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source, r.account_id, a.name AS account_name
             FROM reminders r LEFT JOIN accounts a ON a.id = r.account_id
             ORDER BY r.due ASC, r.updated_at DESC';
     $stmt = $pdo->query($sql);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    // Backfill structured frequency columns from free-form frequency
+    if (!empty($rows)) {
+        $upd = $pdo->prepare('UPDATE reminders SET frequency_every = :every, frequency_unit = :unit WHERE id = :id');
+        foreach ($rows as &$r) {
+            $parsed = (function(string $f): array {
+                $f = trim(strtolower($f));
+                if ($f === '') return [null, null];
+                // Normalize common variants
+                $f = str_replace(['–','—'], '-', $f);
+                $every = null; $unit = null;
+                // Semi-monthly
+                if (strpos($f, 'semi') !== false && strpos($f, 'month') !== false) {
+                    $every = 1; $unit = 'semi-monthly';
+                    return [$every, $unit];
+                }
+                // Biweekly / every 2 weeks
+                if (strpos($f, 'biweek') !== false || strpos($f, 'every 2 week') !== false) {
+                    return [2, 'weeks'];
+                }
+                // Quarterly
+                if (strpos($f, 'quarter') !== false) {
+                    return [3, 'months'];
+                }
+                // Annually / yearly
+                if (strpos($f, 'annual') !== false || strpos($f, 'year') !== false) {
+                    // "every year" or variations
+                    // If a number is present like "2 years", capture it below
+                    $m = [];
+                    if (preg_match('/(\d+)\s*year/', $f, $m)) return [max(1,(int)$m[1]), 'years'];
+                    return [1, 'years'];
+                }
+                // Daily
+                if (strpos($f, 'daily') !== false || strpos($f, 'day') !== false) {
+                    $m = [];
+                    if (preg_match('/(\d+)\s*day/', $f, $m)) return [max(1,(int)$m[1]), 'days'];
+                    return [1, 'days'];
+                }
+                // Generic "every N unit"
+                $m = [];
+                if (preg_match('/every\s*(\d+)\s*(day|week|month|year)/', $f, $m)) {
+                    $n = max(1, (int)$m[1]);
+                    $u = $m[2];
+                    return [$n, $u . 's'];
+                }
+                // Plain "N unit(s)"
+                if (preg_match('/(\d+)\s*(day|week|month|year)s?\b/', $f, $m)) {
+                    $n = max(1, (int)$m[1]);
+                    $u = $m[2];
+                    return [$n, $u . 's'];
+                }
+                // Weekly / Monthly default
+                if (strpos($f, 'week') !== false) return [1, 'weeks'];
+                if (strpos($f, 'month') !== false) return [1, 'months'];
+                // Fallback: leave nulls
+                return [null, null];
+            })((string)($r['frequency'] ?? ''));
+            [$every, $unit] = $parsed;
+            $curEvery = isset($r['frequency_every']) ? (is_null($r['frequency_every']) ? null : (int)$r['frequency_every']) : null;
+            $curUnit = isset($r['frequency_unit']) ? (is_null($r['frequency_unit']) ? null : (string)$r['frequency_unit']) : null;
+            $needsUpdate = ($every !== $curEvery) || ($unit !== $curUnit);
+            if ($needsUpdate) {
+                $upd->execute([
+                    ':every' => $every,
+                    ':unit' => $unit,
+                    ':id' => (int)$r['id'],
+                ]);
+                $r['frequency_every'] = $every;
+                $r['frequency_unit'] = $unit;
+            }
+        }
+        unset($r);
+    }
 } catch (Throwable $e) {
     $error = 'Unable to load reminders.';
 }
@@ -66,6 +141,7 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
                 <th scope="col">Description</th>
                 <th scope="col" class="text-end">Amount</th>
                 <th scope="col">Frequency</th>
+                <th scope="col">Exact Frequency</th>
                 <th scope="col" class="text-end">Actions</th>
               </tr>
             </thead>
@@ -77,6 +153,16 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
                   $desc = $r['description'] ?? '';
                   $amt = $r['amount'];
                   $freq = $r['frequency'] ?? '';
+                  $fev = $r['frequency_every'] ?? null;
+                  $funit = $r['frequency_unit'] ?? null;
+                  $exactStr = '—';
+                  if ($funit === 'semi-monthly') {
+                    $exactStr = 'semi-monthly';
+                  } elseif ($fev !== null && $funit) {
+                    $n = (int)$fev;
+                    $singular = rtrim((string)$funit, 's');
+                    $exactStr = 'every ' . $n . ' ' . ($n === 1 ? $singular : $funit);
+                  }
                   $cls = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                   $fmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                   $rid = (int)($r['id'] ?? 0);
@@ -97,6 +183,8 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
                   data-account="<?= htmlspecialchars((string)$acct) ?>"
                   data-description="<?= htmlspecialchars((string)$desc) ?>"
                   data-frequency="<?= htmlspecialchars((string)$freq) ?>"
+                  data-frequency-every="<?= htmlspecialchars((string)($fev === null ? '' : (string)(int)$fev)) ?>"
+                  data-frequency-unit="<?= htmlspecialchars((string)($funit ?? '')) ?>"
                   data-account-id="<?= (int)($r['account_id'] ?? 0) ?>"
                 >
                   <td><?= $newGroup ? htmlspecialchars((string)$due) : '' ?></td>
@@ -104,6 +192,7 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
                   <td class="text-truncate rem-click-edit" role="button" style="max-width: 520px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                   <td class="text-end <?= $cls ?> rem-click-edit" role="button">$<?= $fmt ?></td>
                   <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$freq) ?></td>
+                  <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$exactStr) ?></td>
                   <td class="text-end">
                     <div class="dropdown">
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
@@ -294,8 +383,8 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         }
         setv('remDescription', row.dataset.description || '');
         setv('remFrequency', row.dataset.frequency || '');
-        // Initialize exact frequency UI from freeform
-        initExactFrequencyFromFreeform(row.dataset.frequency || '');
+        // Initialize exact frequency UI from saved values if available; fallback to freeform
+        initExactFrequencyFromData(row.dataset.frequencyEvery || '', row.dataset.frequencyUnit || '', row.dataset.frequency || '');
         updateExactExampleAndPreview();
         modal && modal.show();
       }
@@ -419,26 +508,32 @@ $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.upd
         return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
       }
 
-      // Exact frequency helpers (preview only)
-      function initExactFrequencyFromFreeform(freqStr){
+      // Exact frequency helpers
+      function initExactFrequencyFromData(everyRaw, unitRaw, freqStr){
         const f = (freqStr || '').toLowerCase();
         const ev = document.getElementById('remFreqEvery');
         const un = document.getElementById('remFreqUnit');
         if (!ev || !un) return;
-        let every = 1; let unit = 'months';
-        if (f.includes('semi') && f.includes('month')) { every = 1; unit = 'semi-monthly'; }
-        else if (f.includes('biweek') || f.includes('every 2 week')) { every = 2; unit = 'weeks'; }
-        else if (f.includes('quarter')) { every = 3; unit = 'months'; }
-        else if (f.includes('year') || f.includes('annual')) { every = 1; unit = 'years'; }
-        else {
-          const m = f.match(/(\d+)\s*(day|week|month|year)/);
-          if (m) {
-            every = Math.max(1, parseInt(m[1], 10) || 1);
-            const u = m[2];
-            unit = (u === 'day') ? 'days' : (u + 's');
-          } else if (f.includes('week')) { every = 1; unit = 'weeks'; }
-          else if (f.includes('month')) { every = 1; unit = 'months'; }
-          else if (f.includes('day')) { every = 1; unit = 'days'; }
+        // Prefer explicit saved values
+        let every = everyRaw ? Math.max(1, parseInt(everyRaw, 10) || 1) : null;
+        let unit = unitRaw || '';
+        if (!every || !unit) {
+          // Fallback to inference from freeform
+          every = 1; unit = 'months';
+          if (f.includes('semi') && f.includes('month')) { every = 1; unit = 'semi-monthly'; }
+          else if (f.includes('biweek') || f.includes('every 2 week')) { every = 2; unit = 'weeks'; }
+          else if (f.includes('quarter')) { every = 3; unit = 'months'; }
+          else if (f.includes('year') || f.includes('annual')) { every = 1; unit = 'years'; }
+          else {
+            const m = f.match(/(\d+)\s*(day|week|month|year)/);
+            if (m) {
+              every = Math.max(1, parseInt(m[1], 10) || 1);
+              const u = m[2];
+              unit = (u === 'day') ? 'days' : (u + 's');
+            } else if (f.includes('week')) { every = 1; unit = 'weeks'; }
+            else if (f.includes('month')) { every = 1; unit = 'months'; }
+            else if (f.includes('day')) { every = 1; unit = 'days'; }
+          }
         }
         ev.value = String(every);
         un.value = unit;

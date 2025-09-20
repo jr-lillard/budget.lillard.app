@@ -18,6 +18,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 try {
     $pdo = get_mysql_connection();
+    // Ensure structured frequency columns exist
+    try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
+    try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
     $id = (int)($_POST['id'] ?? 0);
     $due = trim((string)($_POST['due'] ?? ''));
     $amount = trim((string)($_POST['amount'] ?? ''));
@@ -55,12 +58,29 @@ try {
         $accountNameOut = $accountSelect;
     }
 
+    // Parse free-form frequency to structured values
+    $parsedEvery = null; $parsedUnit = null;
+    $f = strtolower(trim($freq));
+    if ($f !== '') {
+        if (strpos($f, 'semi') !== false && strpos($f, 'month') !== false) { $parsedEvery = 1; $parsedUnit = 'semi-monthly'; }
+        elseif (strpos($f, 'biweek') !== false || strpos($f, 'every 2 week') !== false) { $parsedEvery = 2; $parsedUnit = 'weeks'; }
+        elseif (strpos($f, 'quarter') !== false) { $parsedEvery = 3; $parsedUnit = 'months'; }
+        elseif (preg_match('/(\d+)\s*year/', $f, $m)) { $parsedEvery = max(1, (int)$m[1]); $parsedUnit = 'years'; }
+        elseif (strpos($f, 'annual') !== false || strpos($f, 'year') !== false) { $parsedEvery = 1; $parsedUnit = 'years'; }
+        elseif (preg_match('/(\d+)\s*day/', $f, $m)) { $parsedEvery = max(1, (int)$m[1]); $parsedUnit = 'days'; }
+        elseif (strpos($f, 'daily') !== false || strpos($f, 'day') !== false) { $parsedEvery = 1; $parsedUnit = 'days'; }
+        elseif (preg_match('/every\s*(\d+)\s*(day|week|month|year)/', $f, $m)) { $parsedEvery = max(1,(int)$m[1]); $parsedUnit = $m[2] . 's'; }
+        elseif (preg_match('/(\d+)\s*(day|week|month|year)s?\b/', $f, $m)) { $parsedEvery = max(1,(int)$m[1]); $parsedUnit = $m[2] . 's'; }
+        elseif (strpos($f, 'week') !== false) { $parsedEvery = 1; $parsedUnit = 'weeks'; }
+        elseif (strpos($f, 'month') !== false) { $parsedEvery = 1; $parsedUnit = 'months'; }
+    }
+
     if ($id <= 0) {
         // Insert new reminder
         $bytes = random_bytes(16);
         $hex = strtoupper(bin2hex($bytes));
         $fm_pk = substr($hex,0,8) . '-' . substr($hex,8,4) . '-' . substr($hex,12,4) . '-' . substr($hex,16,4) . '-' . substr($hex,20);
-        $stmt = $pdo->prepare('INSERT INTO reminders (fm_pk, account_id, account_name, description, amount, due, frequency, created_at_source, updated_at_source) VALUES (?,?,?,?,?,?,?,NOW(),NOW())');
+        $stmt = $pdo->prepare('INSERT INTO reminders (fm_pk, account_id, account_name, description, amount, due, frequency, frequency_every, frequency_unit, created_at_source, updated_at_source) VALUES (?,?,?,?,?,?,?,?,?,NOW(),NOW())');
         $stmt->execute([
             $fm_pk,
             $accountId ?: null,
@@ -69,11 +89,13 @@ try {
             $amount !== '' ? $amount : null,
             $due !== '' ? $due : null,
             $freq !== '' ? $freq : null,
+            $parsedEvery,
+            $parsedUnit,
         ]);
         $newId = (int)$pdo->lastInsertId();
         echo json_encode(['ok' => true, 'id' => $newId]);
     } else {
-        $stmt = $pdo->prepare('UPDATE reminders SET account_id = :account_id, account_name = :account_name, description = :description, amount = :amount, due = :due, frequency = :frequency WHERE id = :id');
+        $stmt = $pdo->prepare('UPDATE reminders SET account_id = :account_id, account_name = :account_name, description = :description, amount = :amount, due = :due, frequency = :frequency, frequency_every = :frequency_every, frequency_unit = :frequency_unit WHERE id = :id');
         $stmt->execute([
             ':account_id' => $accountId ?: null,
             ':account_name' => $accountNameOut,
@@ -81,6 +103,8 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':due' => $due !== '' ? $due : null,
             ':frequency' => $freq !== '' ? $freq : null,
+            ':frequency_every' => $parsedEvery,
+            ':frequency_unit' => $parsedUnit,
             ':id' => $id,
         ]);
         echo json_encode(['ok' => true, 'id' => $id]);
@@ -89,4 +113,3 @@ try {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }
-
