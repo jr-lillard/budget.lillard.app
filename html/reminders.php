@@ -97,10 +97,22 @@ try {
 } catch (Throwable $e) {
     $error = 'Unable to load reminders.';
 }
-  // Accounts for select lists (load all accounts so new reminders can target any existing account)
+  // Accounts for select lists: mirror transactions page (recent activity), include filtered account if provided
   try {
-    $as = $pdo->query('SELECT id, name FROM accounts ORDER BY name ASC');
-    $accPairs = $as->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+    $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
+    $accSql = "SELECT DISTINCT a.id, a.name
+               FROM accounts a
+               JOIN transactions t ON t.account_id = a.id
+               WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+               ORDER BY a.name ASC";
+    $accStmt = $pdo->query($accSql);
+    $accPairs = $accStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+    if ($filterAccountId > 0 && !isset($accPairs[$filterAccountId])) {
+      $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');
+      $nm->execute([$filterAccountId]);
+      $name = $nm->fetchColumn();
+      if ($name !== false) { $accPairs[$filterAccountId] = (string)$name; }
+    }
     $accounts = array_values($accPairs);
   } catch (Throwable $e) { $accPairs = []; $accounts = []; }
 ?>
@@ -230,6 +242,11 @@ try {
                 <input type="text" class="form-control" name="amount" id="remAmount" placeholder="0.00">
               </div>
             </div>
+            <div id="remProcessPreviewBox" class="alert alert-secondary py-2 px-3 d-none">
+              <div class="small fw-bold mb-1">Processing preview</div>
+              <div class="small">Current due: <span id="remProcessCurrentDue">—</span></div>
+              <div class="small">New due: <span id="remProcessNewDue">—</span></div>
+            </div>
             <div class="mb-2">
               <label class="form-label">Account</label>
               <select class="form-select" name="account_select" id="remAccountSelect">
@@ -348,8 +365,27 @@ try {
       const setv = (id,v)=>{ const el=g(id); if(el) el.value = v || ''; };
       const todayStr = () => { const d=new Date(); const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; };
 
+      function clearProcessingPreview(){
+        const box = g('remProcessPreviewBox');
+        const btn = g('remProcessBtn');
+        if (box) box.classList.add('d-none');
+        if (btn) btn.classList.remove('d-none');
+      }
+
+      function showProcessingPreview(currentDue, newDue){
+        const box = g('remProcessPreviewBox');
+        const cur = g('remProcessCurrentDue');
+        const nxt = g('remProcessNewDue');
+        const btn = g('remProcessBtn');
+        if (cur) cur.textContent = currentDue || '—';
+        if (nxt) nxt.textContent = newDue || '—';
+        if (box) box.classList.remove('d-none');
+        if (btn) btn.classList.add('d-none');
+      }
+
       function openRemEditFromRow(row){
         if (!row) return;
+        clearProcessingPreview();
         setv('remId', row.dataset.id || row.dataset.reminderId || '');
         setv('remDue', row.dataset.due || '');
         setv('remAmount', row.dataset.amount || '');
@@ -406,6 +442,7 @@ try {
       addBtn && addBtn.addEventListener('click', (e) => {
         e.preventDefault();
         // Reset form for a new reminder
+        clearProcessingPreview();
         setv('remId','');
         setv('remDue', todayStr());
         setv('remAmount','');
@@ -691,9 +728,11 @@ try {
         const amount = pModalEl.dataset.reminderAmount || '';
         const description = pModalEl.dataset.reminderDescription || '';
         const newDue = rollForwardDateFromExact(due, every, unit);
-        // If we were already in edit, just update the due field
+        // If we were already in edit, show preview and update the due field
         if (pModalEl.dataset.fromEdit === '1') {
+          const before = g('remDue')?.value || due || '';
           setv('remDue', newDue);
+          showProcessingPreview(before, newDue);
           return;
         }
         // Otherwise, open edit for this reminder id
@@ -701,9 +740,14 @@ try {
         if (rid) row = document.querySelector(`tr[data-id='${rid}'], tr[data-reminder-id='${rid}']`);
         if (row) {
           openRemEditFromRow(row);
-          setTimeout(() => { setv('remDue', newDue); }, 150);
+          setTimeout(() => {
+            const before = due || row?.dataset?.due || '';
+            setv('remDue', newDue);
+            showProcessingPreview(before, newDue);
+          }, 150);
         } else {
           setv('remId', rid);
+          const before = due || '';
           setv('remDue', newDue);
           setv('remAmount', amount);
           // Account select
@@ -725,6 +769,7 @@ try {
           }
           setv('remDescription', description);
           modal && modal.show();
+          setTimeout(() => { showProcessingPreview(before, newDue); }, 150);
         }
       });
     })();

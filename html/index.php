@@ -145,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 data-account-name="<?= (isset($filterAccountId) && $filterAccountId > 0 && isset($accPairs[$filterAccountId])) ? htmlspecialchars((string)$accPairs[$filterAccountId]) : '' ?>">
                 + Add Transaction
               </button>
-              <a class="btn btn-sm btn-outline-secondary" href="reminders.php">Reminders</a>
+              <a class="btn btn-sm btn-outline-secondary" href="reminders.php<?= ($filterAccountId>0? ('?account_id='.(int)$filterAccountId) : '') ?>">Reminders</a>
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
             </div>
             <form class="d-flex align-items-center gap-2" method="get" action="">
@@ -208,7 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td></td>
                       <td></td>
                       <td class="text-end"><strong class="<?= $projClass ?>">$<?= $projFmt ?></strong></td>
-                      <td></td>
+                      <td class="text-end">
+                        <button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="0" title="New scheduled transaction">
+                          <i class="bi bi-plus-lg"></i>
+                        </button>
+                      </td>
                     </tr>
                     <?php $lastSchedDate = null; foreach ($scheduledRows as $row): ?>
                       <?php
@@ -259,7 +263,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td></td>
                       <td></td>
                       <td class="text-end"><strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong></td>
-                      <td></td>
+                      <td class="text-end">
+                        <button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="1" title="New pending transaction">
+                          <i class="bi bi-plus-lg"></i>
+                        </button>
+                      </td>
                     </tr>
                     <?php $lastPendDate = null; foreach ($pendingRows as $row): ?>
                       <?php
@@ -324,7 +332,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                            . '<td></td>'
                            . '<td></td>'
                            . '<td class="text-end">' . (!$postedSummaryShown ? ('<strong class="' . $postedClass . '">$' . $postedFmt . '</strong>') : '') . '</td>'
-                           . '<td></td>'
+                           . '<td class="text-end">'
+                           .   '<button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="2" data-date="' . htmlspecialchars((string)$date) . '" title="New posted transaction on this date">'
+                           .     '<i class="bi bi-plus-lg"></i>'
+                           .   '</button>'
+                           . '</td>'
                            . '</tr>';
                         $postedSummaryShown = true;
                         $currentDate = $date;
@@ -561,6 +573,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const newInput = g('txAccountNew');
           if (!newInput) return;
           if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
+        });
+
+        // Header add buttons (Scheduled/Pending/Posted-date)
+        document.addEventListener('click', (e) => {
+          const btn = e.target.closest('.tx-header-add');
+          if (!btn) return;
+          e.preventDefault();
+          const status = btn.dataset.status || '1';
+          const dateOverride = btn.dataset.date || '';
+          // Reset form
+          setv('txId','');
+          // Choose date: header-provided date (for posted) or today
+          if (dateOverride) {
+            setv('txDate', dateOverride);
+          } else {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth()+1).padStart(2,'0');
+            const dd = String(today.getDate()).padStart(2,'0');
+            setv('txDate', `${yyyy}-${mm}-${dd}`);
+          }
+          setv('txAmount','');
+          // Set account to current filter if present (from main Add button's dataset)
+          const addBtn = document.getElementById('addTxBtn');
+          const acctName = addBtn?.dataset.accountName || '';
+          const sel2 = g('txAccountSelect');
+          const newInput2 = g('txAccountNew');
+          const keep2 = g('txAccountKeep'); if (keep2) keep2.value = '';
+          if (sel2) {
+            let found=false;
+            if (acctName) { for (const opt of sel2.options){ if(opt.value===acctName){ sel2.value=acctName; found=true; break; } } }
+            if (!found){ sel2.value='__new__'; newInput2 && (newInput2.classList.remove('d-none'), newInput2.value=acctName); }
+            else { newInput2 && (newInput2.classList.add('d-none'), newInput2.value=''); }
+          }
+          setv('txDescription','');
+          setv('txCheck','');
+          const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
+          modal && modal.show();
         });
 
         form && form.addEventListener('submit', async (ev) => {
