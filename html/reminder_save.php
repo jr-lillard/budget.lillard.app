@@ -25,7 +25,11 @@ try {
     $due = trim((string)($_POST['due'] ?? ''));
     $amount = trim((string)($_POST['amount'] ?? ''));
     $desc = trim((string)($_POST['description'] ?? ''));
+    // Legacy freeform frequency (kept but unused)
     $freq = trim((string)($_POST['frequency'] ?? ''));
+    // New exact frequency fields
+    $freqEveryIn = isset($_POST['frequency_every']) ? (string)$_POST['frequency_every'] : '';
+    $freqUnitIn = isset($_POST['frequency_unit']) ? (string)$_POST['frequency_unit'] : '';
     $accountSelect = trim((string)($_POST['account_select'] ?? ''));
     $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
     $accountKeep = (int)($_POST['account_keep'] ?? 0);
@@ -58,21 +62,33 @@ try {
         $accountNameOut = $accountSelect;
     }
 
-    // Parse free-form frequency to structured values
+    // Determine exact frequency to save: prefer explicit inputs; fallback to parsing legacy freeform
     $parsedEvery = null; $parsedUnit = null;
-    $f = strtolower(trim($freq));
-    if ($f !== '') {
-        if (strpos($f, 'semi') !== false && strpos($f, 'month') !== false) { $parsedEvery = 1; $parsedUnit = 'semi-monthly'; }
-        elseif (strpos($f, 'biweek') !== false || strpos($f, 'every 2 week') !== false) { $parsedEvery = 2; $parsedUnit = 'weeks'; }
-        elseif (strpos($f, 'quarter') !== false) { $parsedEvery = 3; $parsedUnit = 'months'; }
-        elseif (preg_match('/(\d+)\s*year/', $f, $m)) { $parsedEvery = max(1, (int)$m[1]); $parsedUnit = 'years'; }
-        elseif (strpos($f, 'annual') !== false || strpos($f, 'year') !== false) { $parsedEvery = 1; $parsedUnit = 'years'; }
-        elseif (preg_match('/(\d+)\s*day/', $f, $m)) { $parsedEvery = max(1, (int)$m[1]); $parsedUnit = 'days'; }
-        elseif (strpos($f, 'daily') !== false || strpos($f, 'day') !== false) { $parsedEvery = 1; $parsedUnit = 'days'; }
-        elseif (preg_match('/every\s*(\d+)\s*(day|week|month|year)/', $f, $m)) { $parsedEvery = max(1,(int)$m[1]); $parsedUnit = $m[2] . 's'; }
-        elseif (preg_match('/(\d+)\s*(day|week|month|year)s?\b/', $f, $m)) { $parsedEvery = max(1,(int)$m[1]); $parsedUnit = $m[2] . 's'; }
-        elseif (strpos($f, 'week') !== false) { $parsedEvery = 1; $parsedUnit = 'weeks'; }
-        elseif (strpos($f, 'month') !== false) { $parsedEvery = 1; $parsedUnit = 'months'; }
+    $unitNormalized = strtolower(trim($freqUnitIn));
+    if ($freqEveryIn !== '' && $unitNormalized !== '') {
+        $n = (int)$freqEveryIn; if ($n < 1) $n = 1;
+        $allowed = ['days','weeks','months','years','semi-monthly'];
+        if (!in_array($unitNormalized, $allowed, true)) {
+            throw new RuntimeException('Invalid frequency unit');
+        }
+        $parsedEvery = ($unitNormalized === 'semi-monthly') ? 1 : $n;
+        $parsedUnit = $unitNormalized;
+    } else {
+        // Fallback: parse legacy free-form frequency
+        $f = strtolower(trim($freq));
+        if ($f !== '') {
+            if (strpos($f, 'semi') !== false && strpos($f, 'month') !== false) { $parsedEvery = 1; $parsedUnit = 'semi-monthly'; }
+            elseif (strpos($f, 'biweek') !== false || strpos($f, 'every 2 week') !== false) { $parsedEvery = 2; $parsedUnit = 'weeks'; }
+            elseif (strpos($f, 'quarter') !== false) { $parsedEvery = 3; $parsedUnit = 'months'; }
+            elseif (preg_match('/(\d+)\s*year/', $f, $m)) { $parsedEvery = max(1, (int)$m[1]); $parsedUnit = 'years'; }
+            elseif (strpos($f, 'annual') !== false || strpos($f, 'year') !== false) { $parsedEvery = 1; $parsedUnit = 'years'; }
+            elseif (preg_match('/(\d+)\s*day/', $f, $m)) { $parsedEvery = max(1, (int)$m[1]); $parsedUnit = 'days'; }
+            elseif (strpos($f, 'daily') !== false || strpos($f, 'day') !== false) { $parsedEvery = 1; $parsedUnit = 'days'; }
+            elseif (preg_match('/every\s*(\d+)\s*(day|week|month|year)/', $f, $m)) { $parsedEvery = max(1,(int)$m[1]); $parsedUnit = $m[2] . 's'; }
+            elseif (preg_match('/(\d+)\s*(day|week|month|year)s?\b/', $f, $m)) { $parsedEvery = max(1,(int)$m[1]); $parsedUnit = $m[2] . 's'; }
+            elseif (strpos($f, 'week') !== false) { $parsedEvery = 1; $parsedUnit = 'weeks'; }
+            elseif (strpos($f, 'month') !== false) { $parsedEvery = 1; $parsedUnit = 'months'; }
+        }
     }
 
     if ($id <= 0) {

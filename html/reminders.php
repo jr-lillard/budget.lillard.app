@@ -141,7 +141,6 @@ try {
                 <th scope="col">Description</th>
                 <th scope="col" class="text-end">Amount</th>
                 <th scope="col">Frequency</th>
-                <th scope="col">Exact Frequency</th>
                 <th scope="col" class="text-end">Actions</th>
               </tr>
             </thead>
@@ -152,7 +151,6 @@ try {
                   $acct = $r['account_name'] ?? '';
                   $desc = $r['description'] ?? '';
                   $amt = $r['amount'];
-                  $freq = $r['frequency'] ?? '';
                   $fev = $r['frequency_every'] ?? null;
                   $funit = $r['frequency_unit'] ?? null;
                   $exactStr = '—';
@@ -182,7 +180,6 @@ try {
                   data-amount="<?= htmlspecialchars((string)$r['amount']) ?>"
                   data-account="<?= htmlspecialchars((string)$acct) ?>"
                   data-description="<?= htmlspecialchars((string)$desc) ?>"
-                  data-frequency="<?= htmlspecialchars((string)$freq) ?>"
                   data-frequency-every="<?= htmlspecialchars((string)($fev === null ? '' : (string)(int)$fev)) ?>"
                   data-frequency-unit="<?= htmlspecialchars((string)($funit ?? '')) ?>"
                   data-account-id="<?= (int)($r['account_id'] ?? 0) ?>"
@@ -191,7 +188,6 @@ try {
                   <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                   <td class="text-truncate rem-click-edit" role="button" style="max-width: 520px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                   <td class="text-end <?= $cls ?> rem-click-edit" role="button">$<?= $fmt ?></td>
-                  <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$freq) ?></td>
                   <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$exactStr) ?></td>
                   <td class="text-end">
                     <div class="dropdown">
@@ -249,24 +245,18 @@ try {
               <label class="form-label">Description</label>
               <input type="text" class="form-control" name="description" id="remDescription">
             </div>
-            <div class="mb-2">
-              <label class="form-label">Frequency</label>
-              <input type="text" class="form-control" name="frequency" id="remFrequency" placeholder="e.g., Monthly">
-              <div class="form-text">Existing freeform frequency (unchanged on save).</div>
-            </div>
             <div class="border rounded p-2 mb-2">
               <div class="d-flex justify-content-between align-items-center mb-2">
-                <label class="form-label mb-0">Exact Frequency (preview only)</label>
-                <span class="badge text-bg-secondary">Does not save yet</span>
+                <label class="form-label mb-0">Frequency</label>
               </div>
               <div class="row g-2 align-items-end">
                 <div class="col-auto">
                   <label class="form-label">Repeat every</label>
-                  <input type="number" min="1" step="1" class="form-control" id="remFreqEvery" value="1">
+                  <input type="number" min="1" step="1" class="form-control" id="remFreqEvery" name="frequency_every" value="1">
                 </div>
                 <div class="col-auto">
                   <label class="form-label">Unit</label>
-                  <select class="form-select" id="remFreqUnit">
+                  <select class="form-select" id="remFreqUnit" name="frequency_unit">
                     <option value="days">day(s)</option>
                     <option value="weeks">week(s)</option>
                     <option value="months" selected>month(s)</option>
@@ -382,9 +372,8 @@ try {
           } else { newInput && (newInput.classList.add('d-none'), newInput.value=''); }
         }
         setv('remDescription', row.dataset.description || '');
-        setv('remFrequency', row.dataset.frequency || '');
-        // Initialize exact frequency UI from saved values if available; fallback to freeform
-        initExactFrequencyFromData(row.dataset.frequencyEvery || '', row.dataset.frequencyUnit || '', row.dataset.frequency || '');
+        // Initialize exact frequency UI from saved values
+        initExactFrequencyFromData(row.dataset.frequencyEvery || '', row.dataset.frequencyUnit || '', '');
         updateExactExampleAndPreview();
         modal && modal.show();
       }
@@ -421,7 +410,6 @@ try {
         setv('remDue', todayStr());
         setv('remAmount','');
         setv('remDescription','');
-        setv('remFrequency','');
         // Reset exact frequency to default (every 1 month)
         const ev = document.getElementById('remFreqEvery'); if (ev) ev.value = '1';
         const un = document.getElementById('remFreqUnit'); if (un) un.value = 'months';
@@ -657,7 +645,8 @@ try {
         // Store context on modal for after-create
         pModalEl.dataset.reminderId = row?.dataset.id || row?.dataset.reminderId || '';
         pModalEl.dataset.reminderDue = row?.dataset.due || '';
-        pModalEl.dataset.reminderFreq = row?.dataset.frequency || '';
+        pModalEl.dataset.reminderEvery = row?.dataset.frequencyEvery || '';
+        pModalEl.dataset.reminderUnit = row?.dataset.frequencyUnit || '';
         pModalEl.dataset.reminderAccount = row?.dataset.account || '';
         pModalEl.dataset.reminderAmount = row?.dataset.amount || '';
         pModalEl.dataset.reminderDescription = row?.dataset.description || '';
@@ -673,7 +662,8 @@ try {
         // Context from current edit fields
         pModalEl.dataset.reminderId = g('remId')?.value || '';
         pModalEl.dataset.reminderDue = g('remDue')?.value || '';
-        pModalEl.dataset.reminderFreq = g('remFrequency')?.value || '';
+        pModalEl.dataset.reminderEvery = g('remFreqEvery')?.value || '';
+        pModalEl.dataset.reminderUnit = g('remFreqUnit')?.value || '';
         // Account to show back in case we need it
         const selR = g('remAccountSelect');
         const newR = g('remAccountNew');
@@ -695,11 +685,12 @@ try {
         // After creation, open reminder edit and roll forward date
         const rid = pModalEl.dataset.reminderId || '';
         const due = pModalEl.dataset.reminderDue || '';
-        const freq = pModalEl.dataset.reminderFreq || '';
+        const every = pModalEl.dataset.reminderEvery || '';
+        const unit = pModalEl.dataset.reminderUnit || '';
         const account = pModalEl.dataset.reminderAccount || '';
         const amount = pModalEl.dataset.reminderAmount || '';
         const description = pModalEl.dataset.reminderDescription || '';
-        const newDue = rollForwardDate(due, freq);
+        const newDue = rollForwardDateFromExact(due, every, unit);
         // If we were already in edit, just update the due field
         if (pModalEl.dataset.fromEdit === '1') {
           setv('remDue', newDue);
@@ -733,7 +724,6 @@ try {
             } else { newInput && (newInput.classList.add('d-none'), newInput.value=''); }
           }
           setv('remDescription', description);
-          setv('remFrequency', freq);
           modal && modal.show();
         }
       });
