@@ -17,7 +17,8 @@ try {
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
-    $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source, r.account_id, a.name AS account_name
+    $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source, r.account_id,
+                    COALESCE(a.name, r.account_name) AS account_name
             FROM reminders r LEFT JOIN accounts a ON a.id = r.account_id
             ORDER BY r.due ASC, r.updated_at DESC';
     $stmt = $pdo->query($sql);
@@ -97,24 +98,16 @@ try {
 } catch (Throwable $e) {
     $error = 'Unable to load reminders.';
 }
-  // Accounts for select lists: mirror transactions page (recent activity), include filtered account if provided
+  // Accounts for selects: show distinct account names from reminders (per request)
   try {
-    $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
-    $accSql = "SELECT DISTINCT a.id, a.name
-               FROM accounts a
-               JOIN transactions t ON t.account_id = a.id
-               WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-               ORDER BY a.name ASC";
+    $accSql = "SELECT DISTINCT COALESCE(a.name, r.account_name) AS name
+               FROM reminders r
+               LEFT JOIN accounts a ON a.id = r.account_id
+               WHERE COALESCE(a.name, r.account_name) IS NOT NULL AND COALESCE(a.name, r.account_name) <> ''
+               ORDER BY name ASC";
     $accStmt = $pdo->query($accSql);
-    $accPairs = $accStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
-    if ($filterAccountId > 0 && !isset($accPairs[$filterAccountId])) {
-      $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');
-      $nm->execute([$filterAccountId]);
-      $name = $nm->fetchColumn();
-      if ($name !== false) { $accPairs[$filterAccountId] = (string)$name; }
-    }
-    $accounts = array_values($accPairs);
-  } catch (Throwable $e) { $accPairs = []; $accounts = []; }
+    $accounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+  } catch (Throwable $e) { $accounts = []; }
 ?>
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
