@@ -35,8 +35,16 @@ try {
     if ($status < 0 || $status > 2) { throw new RuntimeException('Invalid status value'); }
 
     $posted = ($status === 2) ? 1 : 0;
-    $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted WHERE id = :id');
-    $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id]);
+    // If marking as pending or posted, also set the date to today
+    $setDateToday = ($status === 1 || $status === 2);
+    if ($setDateToday) {
+        $today = date('Y-m-d');
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today WHERE id = :id');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':today' => $today, ':id' => $id]);
+    } else {
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted WHERE id = :id');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id]);
+    }
     if ($stmt->rowCount() < 1) {
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Not found']);
@@ -47,4 +55,3 @@ try {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }
-
