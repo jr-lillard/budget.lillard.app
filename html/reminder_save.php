@@ -65,8 +65,12 @@ try {
     // Determine exact frequency to save: prefer explicit inputs; fallback to parsing legacy freeform
     $parsedEvery = null; $parsedUnit = null;
     $unitNormalized = strtolower(trim($freqUnitIn));
-    if ($freqEveryIn !== '' && $unitNormalized !== '') {
-        $n = (int)$freqEveryIn; if ($n < 1) $n = 1;
+    $hasUnit = ($unitNormalized !== '');
+    $hasEvery = ($freqEveryIn !== '');
+    if ($hasUnit && ($hasEvery || $unitNormalized === 'semi-monthly')) {
+        // Accept missing "every" only for semi-monthly; default to 1 in that case
+        $n = $hasEvery ? (int)$freqEveryIn : 1;
+        if ($n < 1) $n = 1;
         $allowed = ['days','weeks','months','years','semi-monthly'];
         if (!in_array($unitNormalized, $allowed, true)) {
             throw new RuntimeException('Invalid frequency unit');

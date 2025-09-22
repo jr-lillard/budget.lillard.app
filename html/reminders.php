@@ -24,6 +24,8 @@ try {
     $stmt = $pdo->query($sql);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     // Backfill structured frequency columns from free-form frequency
+    // IMPORTANT: Only set these once when both are currently NULL.
+    // Do NOT overwrite existing structured values.
     if (!empty($rows)) {
         $upd = $pdo->prepare('UPDATE reminders SET frequency_every = :every, frequency_unit = :unit WHERE id = :id');
         foreach ($rows as &$r) {
@@ -82,8 +84,9 @@ try {
             [$every, $unit] = $parsed;
             $curEvery = isset($r['frequency_every']) ? (is_null($r['frequency_every']) ? null : (int)$r['frequency_every']) : null;
             $curUnit = isset($r['frequency_unit']) ? (is_null($r['frequency_unit']) ? null : (string)$r['frequency_unit']) : null;
-            $needsUpdate = ($every !== $curEvery) || ($unit !== $curUnit);
-            if ($needsUpdate) {
+            // Only backfill when BOTH are currently NULL and we have a parsed value
+            $bothNull = ($curEvery === null && ($curUnit === null || $curUnit === ''));
+            if ($bothNull && ($every !== null || ($unit !== null && $unit !== ''))) {
                 $upd->execute([
                     ':every' => $every,
                     ':unit' => $unit,
