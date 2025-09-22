@@ -101,16 +101,17 @@ try {
 } catch (Throwable $e) {
     $error = 'Unable to load reminders.';
 }
-  // Accounts for selects: show distinct account names from reminders (per request)
+  // Accounts for selects: use distinct account names drawn from reminders only
   try {
-    $accSql = "SELECT DISTINCT COALESCE(a.name, r.account_name) AS name
+    $accSql = "SELECT DISTINCT TRIM(COALESCE(r.account_name, a.name)) AS name
                FROM reminders r
                LEFT JOIN accounts a ON a.id = r.account_id
-               WHERE COALESCE(a.name, r.account_name) IS NOT NULL AND COALESCE(a.name, r.account_name) <> ''
+               WHERE TRIM(COALESCE(r.account_name, a.name)) IS NOT NULL
+                 AND TRIM(COALESCE(r.account_name, a.name)) <> ''
                ORDER BY name ASC";
     $accStmt = $pdo->query($accSql);
-    $accounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
-  } catch (Throwable $e) { $accounts = []; }
+    $reminderAccounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+  } catch (Throwable $e) { $reminderAccounts = []; }
 ?>
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
@@ -246,7 +247,7 @@ try {
             <div class="mb-2">
               <label class="form-label">Account</label>
               <select class="form-select" name="account_select" id="remAccountSelect">
-                <?php if (!empty($accounts)) foreach ($accounts as $a): ?>
+                <?php if (!empty($reminderAccounts)) foreach ($reminderAccounts as $a): ?>
                   <option value="<?= htmlspecialchars((string)$a) ?>"><?= htmlspecialchars((string)$a) ?></option>
                 <?php endforeach; ?>
                 <option value="__new__">Add new account…</option>
@@ -316,7 +317,7 @@ try {
             <div class="mb-2">
               <label class="form-label">Account</label>
               <select class="form-select" name="account_select" id="pTxAccountSelect">
-                <?php if (!empty($accounts)) foreach ($accounts as $a): ?>
+                <?php if (!empty($reminderAccounts)) foreach ($reminderAccounts as $a): ?>
                   <option value="<?= htmlspecialchars((string)$a) ?>"><?= htmlspecialchars((string)$a) ?></option>
                 <?php endforeach; ?>
                 <option value="__new__">Add new account…</option>
