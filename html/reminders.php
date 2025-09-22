@@ -17,9 +17,10 @@ try {
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
-    $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source, r.account_id,
-                    COALESCE(a.name, r.account_name) AS account_name
-            FROM reminders r LEFT JOIN accounts a ON a.id = r.account_id
+    $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source,
+                    r.account_id, r.account_name AS reminder_account_name, a.name AS bank_account_name
+            FROM reminders r
+            LEFT JOIN accounts a ON a.id = r.account_id
             ORDER BY r.due ASC, r.updated_at DESC';
     $stmt = $pdo->query($sql);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -101,17 +102,46 @@ try {
 } catch (Throwable $e) {
     $error = 'Unable to load reminders.';
 }
-  // Accounts for selects: use distinct account names drawn from reminders only
+  // Accounts (payee) for the Edit Reminder select: distinct names from reminders only
   try {
-    $accSql = "SELECT DISTINCT TRIM(COALESCE(r.account_name, a.name)) AS name
+    $accSql = "SELECT DISTINCT TRIM(r.account_name) AS name
                FROM reminders r
-               LEFT JOIN accounts a ON a.id = r.account_id
-               WHERE TRIM(COALESCE(r.account_name, a.name)) IS NOT NULL
-                 AND TRIM(COALESCE(r.account_name, a.name)) <> ''
+               WHERE TRIM(r.account_name) IS NOT NULL
+                 AND TRIM(r.account_name) <> ''
                ORDER BY name ASC";
     $accStmt = $pdo->query($accSql);
     $reminderAccounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
   } catch (Throwable $e) { $reminderAccounts = []; }
+
+  // Transactions accounts list for the Process -> New Transaction modal
+  $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
+  $txAccPairs = [];
+  $txAccounts = [];
+  $filterAccountName = '';
+  try {
+    // Mirror the index.php logic: accounts with activity in the last 3 months
+    $accSql2 = "SELECT DISTINCT a.id, a.name
+                FROM accounts a
+                JOIN transactions t ON t.account_id = a.id
+                WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+                ORDER BY a.name ASC";
+    $accStmt2 = $pdo->query($accSql2);
+    $txAccPairs = $accStmt2->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+    if ($filterAccountId > 0 && !isset($txAccPairs[$filterAccountId])) {
+      $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');
+      $nm->execute([$filterAccountId]);
+      $name = $nm->fetchColumn();
+      if ($name !== false) { $txAccPairs[$filterAccountId] = (string)$name; }
+    }
+    $txAccounts = array_values($txAccPairs);
+    if ($filterAccountId > 0) {
+      $filterAccountName = (string)($txAccPairs[$filterAccountId] ?? '');
+    }
+  } catch (Throwable $e) {
+    $txAccPairs = [];
+    $txAccounts = [];
+    $filterAccountName = '';
+  }
 ?>
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
@@ -157,7 +187,10 @@ try {
               <?php $currentDue = null; foreach ($rows as $r): ?>
                 <?php
                   $due = $r['due'] ?? '';
-                  $acct = $r['account_name'] ?? '';
+                  // Vendor/payee name stored on the reminder
+                  $acctRem = $r['reminder_account_name'] ?? '';
+                  // Bank account name resolved from accounts table (if account_id present)
+                  $acctBank = $r['bank_account_name'] ?? '';
                   $desc = $r['description'] ?? '';
                   $amt = $r['amount'];
                   $fev = $r['frequency_every'] ?? null;
@@ -187,14 +220,15 @@ try {
                   data-id="<?= $rid ?>"
                   data-due="<?= htmlspecialchars((string)$due) ?>"
                   data-amount="<?= htmlspecialchars((string)$r['amount']) ?>"
-                  data-account="<?= htmlspecialchars((string)$acct) ?>"
+                  data-account-rem="<?= htmlspecialchars((string)$acctRem) ?>"
+                  data-account-bank="<?= htmlspecialchars((string)$acctBank) ?>"
                   data-description="<?= htmlspecialchars((string)$desc) ?>"
                   data-frequency-every="<?= htmlspecialchars((string)($fev === null ? '' : (string)(int)$fev)) ?>"
                   data-frequency-unit="<?= htmlspecialchars((string)($funit ?? '')) ?>"
                   data-account-id="<?= (int)($r['account_id'] ?? 0) ?>"
                 >
                   <td><?= $newGroup ? htmlspecialchars((string)$due) : '' ?></td>
-                  <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                  <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$acctRem) ?></td>
                   <td class="text-truncate rem-click-edit" role="button" style="max-width: 520px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                   <td class="text-end <?= $cls ?> rem-click-edit" role="button">$<?= $fmt ?></td>
                   <td class="rem-click-edit" role="button"><?= htmlspecialchars((string)$exactStr) ?></td>
@@ -317,7 +351,7 @@ try {
             <div class="mb-2">
               <label class="form-label">Account</label>
               <select class="form-select" name="account_select" id="pTxAccountSelect">
-                <?php if (!empty($reminderAccounts)) foreach ($reminderAccounts as $a): ?>
+                <?php if (!empty($txAccounts)) foreach ($txAccounts as $a): ?>
                   <option value="<?= htmlspecialchars((string)$a) ?>"><?= htmlspecialchars((string)$a) ?></option>
                 <?php endforeach; ?>
                 <option value="__new__">Add new account…</option>
@@ -390,7 +424,7 @@ try {
         const newInput = g('remAccountNew');
         const keep = g('remAccountKeep'); if (keep) keep.value = row.dataset.accountId || '';
         if (sel) {
-          const acct = row.dataset.account || '';
+          const acct = row.dataset.accountRem || '';
           let found=false;
           if (acct) { for (const opt of sel.options){ if(opt.value===acct){ sel.value=acct; found=true; break; } } }
           if (!found) {
@@ -627,6 +661,8 @@ try {
       const pModal = pModalEl ? new bootstrap.Modal(pModalEl) : null;
       const pForm = document.getElementById('processTxForm');
 
+      const txFilterAccountName = <?= json_encode($filterAccountName) ?>;
+
       function prefillProcessFromSource(source){
         // source: a <tr> with dataset or indicates using edit form fields
         const getVal = (key) => {
@@ -641,28 +677,29 @@ try {
         if (source instanceof HTMLElement) a = parseFloat(getVal('amount') || '0');
         else a = parseFloat(g('remAmount')?.value || '0');
         if (!isFinite(a)) a = 0; if (a > 0) a = -a; setv('pTxAmount', a.toFixed(2));
-        // Account
-        const acctName = (source instanceof HTMLElement) ? (getVal('account') || '') : ((g('remAccountSelect')?.value && g('remAccountSelect')?.value !== '__new__' && g('remAccountSelect')?.value !== '__current__') ? g('remAccountSelect').value : (g('remAccountNew')?.value || ''));
+        // Account (bank) for the transaction: prefer reminder.account_id's bank name, else use transactions filter
+        const bankName = (source instanceof HTMLElement) ? (getVal('accountBank') || '') : (txFilterAccountName || '');
         const acctId = (source instanceof HTMLElement) ? (getVal('accountId') || '') : (g('remAccountKeep')?.value || '');
         const sel = g('pTxAccountSelect');
         const newInput = g('pTxAccountNew');
         const keep = g('pTxAccountKeep'); if (keep) keep.value = acctId || '';
         if (sel) {
           let found=false;
-          if (acctName) { for (const opt of sel.options){ if(opt.value===acctName){ sel.value=acctName; found=true; break; } } }
+          if (bankName) { for (const opt of sel.options){ if(opt.value===bankName){ sel.value=bankName; found=true; break; } } }
           if (!found) {
-            if (acctName) {
-              const opt = document.createElement('option');
-              opt.value='__current__'; opt.textContent=`Current: ${acctName}`; opt.disabled=true; opt.selected=true;
-              sel.insertBefore(opt, sel.firstChild);
-              newInput && (newInput.classList.add('d-none'), newInput.value='');
-            } else {
-              sel.value='__new__'; newInput && (newInput.classList.remove('d-none'), newInput.value='');
+            // If there is a transactions filter account name, prefer that as default
+            if (txFilterAccountName) {
+              for (const opt of sel.options) { if (opt.value === txFilterAccountName) { sel.value = txFilterAccountName; found = true; break; } }
             }
+            if (!found) { sel.value='__new__'; newInput && (newInput.classList.remove('d-none'), newInput.value=''); }
+            else { newInput && (newInput.classList.add('d-none'), newInput.value=''); }
           } else { newInput && (newInput.classList.add('d-none'), newInput.value=''); }
         }
-        // Description from reminder account field per request
-        setv('pTxDescription', acctName || '');
+        // Description from reminder vendor/payee field
+        const vendorName = (source instanceof HTMLElement)
+          ? (getVal('accountRem') || '')
+          : ((g('remAccountSelect')?.value && g('remAccountSelect')?.value !== '__new__' && g('remAccountSelect')?.value !== '__current__') ? g('remAccountSelect').value : (g('remAccountNew')?.value || ''));
+        setv('pTxDescription', vendorName || '');
         // Clear check number and default status to Scheduled
         setv('pTxCheck','');
         const st = g('pTxStatus'); if (st) st.value = '0';
@@ -681,7 +718,7 @@ try {
         pModalEl.dataset.reminderDue = row?.dataset.due || '';
         pModalEl.dataset.reminderEvery = row?.dataset.frequencyEvery || '';
         pModalEl.dataset.reminderUnit = row?.dataset.frequencyUnit || '';
-        pModalEl.dataset.reminderAccount = row?.dataset.account || '';
+        pModalEl.dataset.reminderAccount = row?.dataset.accountRem || '';
         pModalEl.dataset.reminderAmount = row?.dataset.amount || '';
         pModalEl.dataset.reminderDescription = row?.dataset.description || '';
         pModalEl.dataset.fromEdit = '0';
