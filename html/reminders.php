@@ -184,9 +184,20 @@ try {
               </tr>
             </thead>
             <tbody>
-              <?php $currentDue = null; foreach ($rows as $r): ?>
+              <?php
+                $currentDue = null;
+                $todayBucketKey = date('Y-m-d');
+                $currentBucket = null; // one of: 'past','today','future'
+                foreach ($rows as $r): ?>
                 <?php
                   $due = $r['due'] ?? '';
+                  // Determine temporal bucket for visual breaks
+                  $bucket = 'future';
+                  if (is_string($due) && $due !== '') {
+                    if ($due < $todayBucketKey) { $bucket = 'past'; }
+                    elseif ($due === $todayBucketKey) { $bucket = 'today'; }
+                    else { $bucket = 'future'; }
+                  }
                   // Vendor/payee name stored on the reminder
                   $acctRem = $r['reminder_account_name'] ?? '';
                   // Bank account name resolved from accounts table (if account_id present)
@@ -206,6 +217,11 @@ try {
                   $cls = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                   $fmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                   $rid = (int)($r['id'] ?? 0);
+                  // Insert a spacer row when transitioning between past/today/future buckets
+                  if ($currentBucket !== null && $bucket !== $currentBucket) {
+                    echo '<tr class="bg-transparent"><td colspan="6" class="p-1"></td></tr>';
+                  }
+                  $currentBucket = $bucket;
                   $newGroup = ($due !== $currentDue);
                   if ($newGroup) {
                     $label = $due;
