@@ -66,7 +66,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
             try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
             $limit = 50; // recent rows to show
-            $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
+            // Remember account filter for the session
+            $filterAccountId = 0;
+            if (array_key_exists('account_id', $_GET)) {
+              // account_id provided via querystring (may be empty for clearing)
+              $filterAccountId = (int)($_GET['account_id'] ?? 0);
+              $_SESSION['tx_filter_account_id'] = $filterAccountId;
+            } elseif (isset($_SESSION['tx_filter_account_id'])) {
+              // fall back to saved session filter if present
+              $filterAccountId = (int)$_SESSION['tx_filter_account_id'];
+            }
 
             $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source, 
                            t.account_id, a.name AS account_name
@@ -157,8 +166,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 <?php endforeach; ?>
               </select>
               <button type="submit" class="btn btn-sm btn-primary">Filter</button>
-              <?php if (!empty($_GET)): ?>
-                <a class="btn btn-sm btn-outline-secondary" href="index.php">Clear</a>
+              <?php if ((int)$filterAccountId > 0): ?>
+                <!-- Clear by explicitly submitting an empty account_id to reset the session value -->
+                <a class="btn btn-sm btn-outline-secondary" href="index.php?account_id=">Clear</a>
               <?php endif; ?>
             </form>
           </div>
