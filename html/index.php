@@ -41,6 +41,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <style>
+      /* Ensure blank separator rows are truly transparent, overriding Bootstrap table striping */
+      .spacer-row { --bs-table-accent-bg: transparent; }
+      .spacer-row > td { background-color: transparent !important; border: 0; padding-top: 1rem; padding-bottom: 1rem; }
+    </style>
   </head>
   <body>
     <nav class="navbar bg-body-tertiary sticky-top">
@@ -268,9 +273,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <?php endforeach; ?>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows) && !empty($scheduledRows)): ?>
-                    <tr class="bg-transparent" style="background: transparent !important;">
-                      <td colspan="5" class="py-3 bg-transparent" style="background: transparent !important; --bs-table-accent-bg: transparent;"></td>
-                    </tr>
+                    <tr class="spacer-row"><td colspan="5"></td></tr>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
                     <tr class="table-active">
@@ -326,9 +329,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       </tr>
                     <?php endforeach; endif; ?>
                   <?php if (!empty($postedRows) && (!empty($scheduledRows) || !empty($pendingRows))): ?>
-                    <tr class="bg-transparent" style="background: transparent !important;">
-                      <td colspan="5" class="py-3 bg-transparent" style="background: transparent !important; --bs-table-accent-bg: transparent;"></td>
-                    </tr>
+                    <tr class="spacer-row"><td colspan="5"></td></tr>
                   <?php endif; ?>
                   <?php if (!empty($postedRows)):
                     $currentDate = null;
