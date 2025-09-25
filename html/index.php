@@ -267,6 +267,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       </tr>
                     <?php endforeach; ?>
                   <?php endif; ?>
+                  <?php if (!empty($pendingRows) && !empty($scheduledRows)): ?>
+                    <tr class="bg-transparent"><td colspan="5" class="py-2"><div class="my-3 border-top border-4 border-secondary opacity-50"></div></td></tr>
+                  <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
                     <tr class="table-active">
                       <td>Pending</td>
@@ -320,6 +323,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         </td>
                       </tr>
                     <?php endforeach; endif; ?>
+                  <?php if (!empty($postedRows) && (!empty($scheduledRows) || !empty($pendingRows))): ?>
+                    <tr class="bg-transparent"><td colspan="5" class="py-2"><div class="my-3 border-top border-4 border-secondary opacity-50"></div></td></tr>
+                  <?php endif; ?>
                   <?php if (!empty($postedRows)):
                     $currentDate = null;
                     $postedSummaryShown = false;
