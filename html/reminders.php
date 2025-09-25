@@ -217,11 +217,9 @@ try {
                   $cls = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                   $fmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                   $rid = (int)($r['id'] ?? 0);
-                  // Insert a prominent separator row when transitioning between past/today/future buckets
+                  // Insert a simple blank separator row when transitioning between past/today/future buckets
                   if ($currentBucket !== null && $bucket !== $currentBucket) {
-                    echo '<tr class="bg-transparent"><td colspan="6" class="py-2">'
-                       . '<div class="my-3 border-top border-4 border-secondary opacity-50"></div>'
-                       . '</td></tr>';
+                    echo '<tr class="bg-transparent"><td colspan="6" class="py-3"></td></tr>';
                   }
                   $currentBucket = $bucket;
                   $newGroup = ($due !== $currentDue);
