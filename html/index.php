@@ -42,9 +42,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
     <style>
-      /* Ensure blank separator rows are truly transparent, overriding Bootstrap table striping */
-      .spacer-row { --bs-table-accent-bg: transparent; }
-      .spacer-row > td { background-color: transparent !important; border: 0; padding-top: 1rem; padding-bottom: 1rem; }
+      /* Ensure blank separator rows are truly transparent, overriding Bootstrap table striping/hover */
+      .spacer-row,
+      .spacer-row > td {
+        /* Neutralize Bootstrap table variables at the cell level */
+        --bs-table-bg: transparent !important;
+        --bs-table-accent-bg: transparent !important;
+        --bs-table-hover-bg: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important; /* Bootstrap uses box-shadow overlay for striping */
+      }
+      .spacer-row > td {
+        border: 0 !important;
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+      }
     </style>
   </head>
   <body>
