@@ -237,6 +237,7 @@ try {
                   // Insert a simple blank separator row when transitioning between past/today/future buckets
                   if ($currentBucket !== null && $bucket !== $currentBucket) {
                     echo '<tr class="spacer-row"><td colspan="6"></td></tr>';
+                    echo '<tr class="spacer-row"><td colspan="6"></td></tr>';
                   }
                   $currentBucket = $bucket;
                   $newGroup = ($due !== $currentDue);

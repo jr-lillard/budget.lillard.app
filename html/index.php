@@ -286,6 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <?php endif; ?>
                   <?php if (!empty($pendingRows) && !empty($scheduledRows)): ?>
                     <tr class="spacer-row"><td colspan="5"></td></tr>
+                    <tr class="spacer-row"><td colspan="5"></td></tr>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
                     <tr class="table-active">
@@ -341,6 +342,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       </tr>
                     <?php endforeach; endif; ?>
                   <?php if (!empty($postedRows) && (!empty($scheduledRows) || !empty($pendingRows))): ?>
+                    <tr class="spacer-row"><td colspan="5"></td></tr>
                     <tr class="spacer-row"><td colspan="5"></td></tr>
                   <?php endif; ?>
                   <?php if (!empty($postedRows)):
