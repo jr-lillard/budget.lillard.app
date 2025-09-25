@@ -268,7 +268,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <?php endforeach; ?>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows) && !empty($scheduledRows)): ?>
-                    <tr class="bg-transparent"><td colspan="5" class="py-3"></td></tr>
+                    <tr class="bg-transparent" style="background: transparent !important;">
+                      <td colspan="5" class="py-3 bg-transparent" style="background: transparent !important; --bs-table-accent-bg: transparent;"></td>
+                    </tr>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
                     <tr class="table-active">
@@ -324,7 +326,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       </tr>
                     <?php endforeach; endif; ?>
                   <?php if (!empty($postedRows) && (!empty($scheduledRows) || !empty($pendingRows))): ?>
-                    <tr class="bg-transparent"><td colspan="5" class="py-3"></td></tr>
+                    <tr class="bg-transparent" style="background: transparent !important;">
+                      <td colspan="5" class="py-3 bg-transparent" style="background: transparent !important; --bs-table-accent-bg: transparent;"></td>
+                    </tr>
                   <?php endif; ?>
                   <?php if (!empty($postedRows)):
                     $currentDate = null;

@@ -219,7 +219,9 @@ try {
                   $rid = (int)($r['id'] ?? 0);
                   // Insert a simple blank separator row when transitioning between past/today/future buckets
                   if ($currentBucket !== null && $bucket !== $currentBucket) {
-                    echo '<tr class="bg-transparent"><td colspan="6" class="py-3"></td></tr>';
+                    echo '<tr class="bg-transparent" style="background: transparent !important;">'
+                       . '<td colspan="6" class="py-3 bg-transparent" style="background: transparent !important; --bs-table-accent-bg: transparent;"></td>'
+                       . '</tr>';
                   }
                   $currentBucket = $bucket;
                   $newGroup = ($due !== $currentDue);
