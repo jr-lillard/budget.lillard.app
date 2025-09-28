@@ -2,6 +2,8 @@
 declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../util.php';
+// Attempt cookie-based auto-login
+try { $pdo = get_mysql_connection(); auth_login_from_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
 
 if (!isset($_SESSION['username']) || $_SESSION['username'] === '') {
     header('Location: index.php');

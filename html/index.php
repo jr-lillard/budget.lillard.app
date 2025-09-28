@@ -3,6 +3,22 @@ declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../util.php';
 
+// Attempt auto-login from persistent cookie if no active session
+try { $pdo = get_mysql_connection(); auth_login_from_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
+
+// Handle logout request (clears session and persistent cookie)
+if (isset($_GET['logout'])) {
+    try { $pdo = $pdo ?? get_mysql_connection(); auth_clear_remember_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000, $params['path'] ?? '/', $params['domain'] ?? '', !empty($params['secure']), (bool)($params['httponly'] ?? true));
+    }
+    session_destroy();
+    header('Location: ' . (string)($_SERVER['PHP_SELF'] ?? 'index.php'));
+    exit;
+}
+
 $pageTitle = 'Budget';
 $loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
 $loginError = '';
@@ -20,6 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $hash = $stmt->fetchColumn();
             if ($hash && password_verify($password, (string)$hash)) {
                 $_SESSION['username'] = $username;
+                // Issue persistent remember-me cookie for this device
+                try { auth_issue_remember_cookie($pdo, $username); } catch (Throwable $e) { /* ignore */ }
                 header('Location: ' . (string)($_SERVER['PHP_SELF'] ?? 'index.php'));
                 exit;
             } else {
@@ -66,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           <a class="navbar-brand mx-auto" href="#"><?= htmlspecialchars($pageTitle) ?></a>
           <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
             <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
-            <a class="btn btn-outline-secondary btn-sm" href="#" role="button" aria-disabled="true">Logout</a>
+            <a class="btn btn-outline-secondary btn-sm" href="index.php?logout=1">Logout</a>
           </div>
         <?php else: ?>
           <span class="navbar-brand mx-auto"><?= htmlspecialchars($pageTitle) ?></span>
