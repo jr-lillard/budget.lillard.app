@@ -112,8 +112,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $filterAccountId = (int)$_SESSION['tx_filter_account_id'];
             }
 
-            $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source, 
-                           t.account_id, a.name AS account_name
+            $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source, 
+                       t.account_id, a.name AS account_name
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id';
             $params = [];

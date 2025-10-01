@@ -23,6 +23,8 @@ try {
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
+    // Ensure legacy fm_pk is nullable so we can stop using it
+    try { $pdo->exec("ALTER TABLE reminders MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
     $id = (int)($_POST['id'] ?? 0);
     $due = trim((string)($_POST['due'] ?? ''));
     $amount = trim((string)($_POST['amount'] ?? ''));
@@ -98,13 +100,9 @@ try {
     }
 
     if ($id <= 0) {
-        // Insert new reminder
-        $bytes = random_bytes(16);
-        $hex = strtoupper(bin2hex($bytes));
-        $fm_pk = substr($hex,0,8) . '-' . substr($hex,8,4) . '-' . substr($hex,12,4) . '-' . substr($hex,16,4) . '-' . substr($hex,20);
-        $stmt = $pdo->prepare('INSERT INTO reminders (fm_pk, account_id, account_name, description, amount, due, frequency, frequency_every, frequency_unit, created_at_source, updated_at_source) VALUES (?,?,?,?,?,?,?,?,?,NOW(),NOW())');
+        // Insert new reminder (no fm_pk)
+        $stmt = $pdo->prepare('INSERT INTO reminders (account_id, account_name, description, amount, due, frequency, frequency_every, frequency_unit, created_at_source, updated_at_source) VALUES (?,?,?,?,?,?,?,?,NOW(),NOW())');
         $stmt->execute([
-            $fm_pk,
             $accountId ?: null,
             $accountNameOut,
             $desc !== '' ? $desc : null,

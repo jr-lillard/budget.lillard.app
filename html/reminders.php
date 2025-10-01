@@ -19,7 +19,7 @@ try {
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
-    $sql = 'SELECT r.id, r.fm_pk, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source,
+    $sql = 'SELECT r.id, r.due, r.amount, r.description, r.frequency, r.frequency_every, r.frequency_unit, r.updated_at_source,
                     r.account_id, r.account_name AS reminder_account_name, a.name AS bank_account_name
             FROM reminders r
             LEFT JOIN accounts a ON a.id = r.account_id

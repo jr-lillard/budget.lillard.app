@@ -26,6 +26,8 @@ try {
     } catch (Throwable $e) {
         // ignore if exists
     }
+    // Ensure legacy fm_pk is nullable so we can stop using it
+    try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
     $id = (int)($_POST['id'] ?? 0);
     // New vs update
     $isInsert = ($id <= 0);
@@ -88,15 +90,10 @@ try {
     $postedInt = ($statusVal === 2) ? 1 : 0;
 
     if ($isInsert) {
-        // Generate a GUID-like fm_pk
-        $bytes = random_bytes(16);
-        $hex = strtoupper(bin2hex($bytes));
-        $fm_pk = substr($hex,0,8) . '-' . substr($hex,8,4) . '-' . substr($hex,12,4) . '-' . substr($hex,16,4) . '-' . substr($hex,20);
-        $sql = 'INSERT INTO transactions (fm_pk, account_id, `date`, amount, description, check_no, posted, status, created_at_source, updated_at_source)
-                VALUES (:fm_pk, :account_id, :date, :amount, :description, :check_no, :posted, :status, NOW(), NOW())';
+        $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, created_at_source, updated_at_source)
+                VALUES (:account_id, :date, :amount, :description, :check_no, :posted, :status, NOW(), NOW())';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
-            ':fm_pk' => $fm_pk,
             ':account_id' => $accountId ?: null,
             ':date' => $date !== '' ? $date : null,
             ':amount' => $amount !== '' ? $amount : null,

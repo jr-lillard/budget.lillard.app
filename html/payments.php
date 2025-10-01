@@ -51,7 +51,7 @@ try {
     $prevMonthsInScope = 12;
 
     // Base query: only transactions where description exactly 'Payment' within selected month
-    $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source,
+    $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.updated_at_source,
                    t.account_id, a.name AS account_name
             FROM transactions t
             LEFT JOIN accounts a ON a.id = t.account_id
