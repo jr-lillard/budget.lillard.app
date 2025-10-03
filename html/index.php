@@ -78,19 +78,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     </style>
   </head>
   <body>
-    <nav class="navbar bg-body-tertiary sticky-top">
-      <div class="container-fluid position-relative">
-        <?php if ($loggedIn): ?>
-          <a class="navbar-brand mx-auto" href="#"><?= htmlspecialchars($pageTitle) ?></a>
-          <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
-            <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
-            <a class="btn btn-outline-secondary btn-sm" href="index.php?logout=1">Logout</a>
-          </div>
-        <?php else: ?>
-          <span class="navbar-brand mx-auto"><?= htmlspecialchars($pageTitle) ?></span>
-        <?php endif; ?>
-      </div>
-    </nav>
+    <?php if ($loggedIn): ?>
+      <nav class="navbar bg-body-tertiary sticky-top">
+        <div class="container-fluid position-relative">
+            <a class="navbar-brand mx-auto" href="#"><?= htmlspecialchars($pageTitle) ?></a>
+            <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
+              <span class="text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)$_SESSION['username']) ?></span>
+              <a class="btn btn-outline-secondary btn-sm" href="index.php?logout=1">Logout</a>
+            </div>
+        </div>
+      </nav>
+    <?php endif; ?>
     <?php /* Offcanvas menu removed per request */ ?>
 
     <main>
@@ -428,20 +426,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           <?php endif; ?>
         </div>
       <?php else: ?>
-        <div class="container mt-5 mx-auto" style="max-width: 420px;">
-          <?php if ($loginError !== ''): ?>
-            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($loginError) ?></div>
-          <?php endif; ?>
-          <form method="post" action="" id="loginForm">
-            <div class="mb-3">
-              <label for="username" class="form-label">Username</label>
-              <input type="text" id="username" name="username" class="form-control" autocomplete="username" required>
-            </div>
-            <div class="mb-3">
-              <label for="password" class="form-label">Password</label>
-              <input type="password" id="password" name="password" class="form-control" autocomplete="current-password" required>
-            </div>
-            <button type="submit" class="btn btn-primary w-100">Log In</button>
+        <!-- Discreet login: single centered email input, no labels, no buttons -->
+        <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh;">
+          <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;">
+            <input type="email" id="username" name="username" class="form-control text-center" autocomplete="username" autofocus>
+            <!-- Keep password field present but hidden so Enter submits the form; backend remains unchanged -->
+            <input type="password" id="password" name="password" class="visually-hidden" tabindex="-1" aria-hidden="true">
           </form>
         </div>
       <?php endif; ?>
