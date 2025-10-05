@@ -186,3 +186,67 @@ function auth_login_from_cookie(PDO $pdo): void
         // ignore
     }
 }
+
+/**
+ * Send an email using SMTP2GO's HTTP API.
+ * Reads credentials from config.php under ['mail'].
+ * Returns [bool ok, ?string error].
+ */
+function send_mail_via_smtp2go(string|array $to, string $subject, string $html, ?string $text = null, ?string $from = null): array
+{
+    $config = require __DIR__ . '/config.php';
+    $mail = $config['mail'] ?? [];
+    $provider = $mail['provider'] ?? 'smtp2go';
+    if ($provider !== 'smtp2go') {
+        return [false, 'Mail provider not configured: smtp2go'];
+    }
+    $apiKey = (string)($mail['api_key'] ?? '');
+    $fromAddr = (string)($from ?? ($mail['from'] ?? ''));
+    if ($apiKey === '' || $fromAddr === '') {
+        return [false, 'SMTP2GO api_key/from not configured'];
+    }
+
+    $toList = is_array($to) ? $to : [$to];
+    // Ensure non-empty body
+    $textBody = $text ?? trim((string)preg_replace('/\s+/', ' ', strip_tags($html)));
+
+    $payload = [
+        'api_key' => $apiKey,
+        'to' => $toList,
+        'sender' => $fromAddr,
+        'subject' => $subject,
+        'text_body' => $textBody,
+        'html_body' => $html,
+    ];
+
+    $ch = curl_init('https://api.smtp2go.com/v3/email/send');
+    if ($ch === false) {
+        return [false, 'curl_init failed'];
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    $resp = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($resp === false) {
+        return [false, 'curl_exec failed: ' . $err];
+    }
+    $data = json_decode($resp, true);
+    if (!is_array($data)) {
+        return [false, 'Invalid SMTP2GO response (HTTP ' . (string)$code . ')'];
+    }
+    // SMTP2GO success status example: {"request_id":"...","data":{"succeeded":1,"failed":0}}
+    $status = $data['data']['succeeded'] ?? null;
+    if ((int)$status >= 1) {
+        return [true, null];
+    }
+    $errMsg = $data['data']['failures'][0]['error'] ?? ($data['error'] ?? 'Unknown SMTP2GO error');
+    return [false, (string)$errMsg];
+}
