@@ -559,7 +559,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 <input type="email"
                        name="email"
                        class="form-control text-center"
-                       placeholder="Email"
                        aria-label="Email address"
                        autocomplete="email"
                        autocorrect="off"
