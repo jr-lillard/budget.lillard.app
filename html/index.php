@@ -428,12 +428,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       <?php else: ?>
         <!-- Discreet login: single centered email input, no labels, no buttons -->
         <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh;">
-          <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;">
-            <input type="email" id="username" name="username" class="form-control text-center" autocomplete="username" autofocus>
+          <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;" autocomplete="off">
+            <input type="email" id="loginEmail" class="form-control text-center" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="email" autofocus>
+            <input type="hidden" name="username" id="loginUsername">
             <!-- Keep password field present but hidden so Enter submits the form; backend remains unchanged -->
-            <input type="password" id="password" name="password" class="visually-hidden" tabindex="-1" aria-hidden="true">
+            <input type="password" id="password" name="password" class="visually-hidden" tabindex="-1" aria-hidden="true" autocomplete="new-password">
           </form>
         </div>
+        <script>
+        (() => {
+          const form = document.getElementById('loginForm');
+          const email = document.getElementById('loginEmail');
+          const hiddenUser = document.getElementById('loginUsername');
+          if (!form || !email || !hiddenUser) return;
+          const sync = () => { hiddenUser.value = email.value.trim(); };
+          email.addEventListener('input', sync);
+          form.addEventListener('submit', () => {
+            sync();
+          });
+        })();
+        </script>
       <?php endif; ?>
     </main>
 
