@@ -433,12 +433,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                    id="loginEmail"
                    class="form-control text-center"
                    autocomplete="off"
-                   autocorrect="off"
-                   autocapitalize="none"
-                   spellcheck="false"
-                   inputmode="email"
-                   data-1p-ignore="true"
-                   data-lpignore="true">
+                    autocorrect="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                   inputmode="text"
+                   readonly
+                    data-1p-ignore="true"
+                    data-lpignore="true">
             <input type="hidden" id="loginUsername" autocomplete="off" data-1p-ignore="true" data-lpignore="true">
             <!-- Keep password placeholder field for backend compatibility but avoid password heuristics -->
             <input type="hidden" id="loginPassword" autocomplete="off" data-1p-ignore="true" data-lpignore="true" value="">
@@ -452,6 +453,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const hiddenPass = document.getElementById('loginPassword');
           if (!form || !emailInput || !hiddenUser || !hiddenPass) return;
           const sync = () => { hiddenUser.value = emailInput.value.trim(); };
+          const ensureEditable = () => {
+            if (emailInput.hasAttribute('readonly')) {
+              emailInput.removeAttribute('readonly');
+              // Move cursor to end after removing readonly
+              window.requestAnimationFrame(() => {
+                const len = emailInput.value.length;
+                emailInput.setSelectionRange(len, len);
+              });
+            }
+          };
           const injectFields = () => {
             if (!form.querySelector('input[name="username"]')) {
               const userField = document.createElement('input');
@@ -468,6 +479,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               form.appendChild(passField);
             }
           };
+          emailInput.addEventListener('focus', ensureEditable, { once: true });
+          emailInput.addEventListener('mousedown', ensureEditable, { once: true });
+          emailInput.addEventListener('keydown', (ev) => {
+            if (ev.key !== 'Tab') ensureEditable();
+          });
           emailInput.addEventListener('input', sync);
           emailInput.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') {
@@ -481,7 +497,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             sync();
             injectFields();
           });
-          window.addEventListener('load', () => { emailInput.focus(); });
+          // Do not autofocus; awaiting intentional user interaction prevents Safari heuristics
         })();
         </script>
       <?php endif; ?>
