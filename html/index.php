@@ -75,19 +75,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         padding-top: 1rem;
         padding-bottom: 1rem;
       }
-      .login-email-input {
-        min-height: 3rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: text;
-        text-align: center;
-        outline: none;
-      }
-      .login-email-input[contenteditable="true"]:empty::before {
-        content: attr(data-placeholder);
-        color: var(--bs-secondary-color);
-      }
     </style>
   </head>
   <body>
@@ -441,23 +428,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       <?php else: ?>
         <!-- Discreet login: single centered email input, no labels, no buttons -->
         <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh;">
-          <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;" autocomplete="off" novalidate>
-            <div id="loginEmail" class="form-control text-center login-email-input" contenteditable="true" role="textbox" aria-label="Email address" spellcheck="false" data-placeholder="Email" autocapitalize="none"></div>
+          <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;" autocomplete="off" data-1p-ignore="true" data-lpignore="true" novalidate>
+            <input type="text"
+                   id="loginEmail"
+                   class="form-control text-center"
+                   autocomplete="off"
+                   autocorrect="off"
+                   autocapitalize="none"
+                   spellcheck="false"
+                   inputmode="email"
+                   data-1p-ignore="true"
+                   data-lpignore="true">
             <input type="hidden" name="username" id="loginUsername">
-            <!-- Keep password post value for backend compatibility, but avoid password heuristics -->
-            <input type="hidden" id="password" name="password" value="">
+            <!-- Keep password field for backend compatibility but hide it completely -->
+            <input type="password" id="password" name="password" value="" autocomplete="new-password" style="display:none;" data-1p-ignore="true" data-lpignore="true">
           </form>
         </div>
         <script>
         (() => {
           const form = document.getElementById('loginForm');
-          const emailBox = document.getElementById('loginEmail');
+          const emailInput = document.getElementById('loginEmail');
           const hiddenUser = document.getElementById('loginUsername');
-          if (!form || !emailBox || !hiddenUser) return;
-          const getValue = () => emailBox.textContent.trim();
-          const sync = () => { hiddenUser.value = getValue(); };
-          emailBox.addEventListener('input', sync);
-          emailBox.addEventListener('keydown', (ev) => {
+          if (!form || !emailInput || !hiddenUser) return;
+          const sync = () => { hiddenUser.value = emailInput.value.trim(); };
+          emailInput.addEventListener('input', sync);
+          emailInput.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') {
               ev.preventDefault();
               sync();
@@ -465,18 +460,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             }
           });
           form.addEventListener('submit', sync);
-          // Focus the contenteditable box on load
-          window.requestAnimationFrame(() => {
-            const range = document.createRange();
-            const sel = window.getSelection();
-            if (range && sel) {
-              range.selectNodeContents(emailBox);
-              range.collapse(false);
-              sel.removeAllRanges();
-              sel.addRange(range);
-            }
-            emailBox.focus();
-          });
+          window.addEventListener('load', () => { emailInput.focus(); });
         })();
         </script>
       <?php endif; ?>
