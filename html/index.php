@@ -40,6 +40,34 @@ HTML;
     return send_mail_via_smtp2go($email, $subject, $html, $text, null);
 }
 
+/**
+ * Redirect immediately, then run any queued tasks after the response is flushed.
+ */
+function budget_redirect(string $target, array $afterResponseTasks = []): void
+{
+    header('Location: ' . $target);
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        @ob_end_flush();
+        flush();
+    }
+    ignore_user_abort(true);
+    foreach ($afterResponseTasks as $task) {
+        if (is_callable($task)) {
+            try {
+                $task();
+            } catch (Throwable $e) {
+                error_log('Post-redirect task failed: ' . $e->getMessage());
+            }
+        }
+    }
+    exit;
+}
+
 $loginFlash = $_SESSION['login_flash'] ?? [];
 unset($_SESSION['login_flash']);
 
@@ -52,55 +80,56 @@ if (is_array($loginFlow) && isset($loginFlow['email'], $loginFlow['code_hash'], 
     unset($_SESSION['login_flow']);
 }
 $pendingEmail = is_array($loginFlow) ? (string)$loginFlow['email'] : '';
+$afterResponseTasks = [];
+$flashMessage = trim((string)($loginFlash['message'] ?? ''));
+$flashType = $loginFlash['type'] ?? '';
+$emailErrorMessage = ($loginStep === 'email' && $flashType === 'danger') ? $flashMessage : '';
+$codeErrorMessage = ($loginStep === 'code' && $flashType === 'danger') ? $flashMessage : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     $mode = (string)($_POST['mode'] ?? '');
     $self = (string)($_SERVER['PHP_SELF'] ?? 'index.php');
-    $redirect = function () use ($self): void {
-        header('Location: ' . $self);
-        exit;
-    };
 
     if ($mode === 'request-code') {
         $email = trim((string)($_POST['email'] ?? ''));
         if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter a valid email address.'];
             unset($_SESSION['login_flow']);
-            $redirect();
+            budget_redirect($self);
         }
 
         $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        [$ok, $err] = budget_send_login_code($email, $code);
-        if ($ok) {
-            $_SESSION['login_flow'] = [
-                'email' => $email,
-                'code_hash' => hash('sha256', $code),
-                'expires' => time() + 600,
-                'attempts' => 0,
-                'last_sent' => time(),
-            ];
-            $_SESSION['login_flash'] = ['type' => 'success', 'message' => 'We emailed a 6-digit code.'];
-        } else {
-            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => $err ?: 'Unable to send the login code.'];
-            unset($_SESSION['login_flow']);
-        }
-        $redirect();
+        $_SESSION['login_flow'] = [
+            'email' => $email,
+            'code_hash' => hash('sha256', $code),
+            'expires' => time() + 600,
+            'attempts' => 0,
+            'last_sent' => time(),
+        ];
+        unset($_SESSION['login_flash']);
+        $afterResponseTasks[] = static function () use ($email, $code): void {
+            [$ok, $err] = budget_send_login_code($email, $code);
+            if (!$ok) {
+                error_log(sprintf('Login code email failed for %s: %s', $email, (string)$err));
+            }
+        };
+        budget_redirect($self, $afterResponseTasks);
     } elseif ($mode === 'verify-code') {
         $flow = $_SESSION['login_flow'] ?? null;
         $codeDigits = preg_replace('/[^0-9]/', '', (string)($_POST['code'] ?? ''));
         if (!is_array($flow) || !isset($flow['email'], $flow['code_hash'], $flow['expires'])) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
             unset($_SESSION['login_flow']);
-            $redirect();
+            budget_redirect($self);
         }
         if ((int)$flow['expires'] < time()) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'That code expired. Request a new one.'];
             unset($_SESSION['login_flow']);
-            $redirect();
+            budget_redirect($self);
         }
         if (strlen($codeDigits) !== 6) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter the 6-digit code from the email.'];
-            $redirect();
+            budget_redirect($self);
         }
         $expected = (string)$flow['code_hash'];
         $actual = hash('sha256', $codeDigits);
@@ -114,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 $_SESSION['login_flow'] = $flow;
                 $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Incorrect code. Try again.'];
             }
-            $redirect();
+            budget_redirect($self);
         }
 
         unset($_SESSION['login_flow']);
@@ -126,40 +155,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         } catch (Throwable $e) {
             // ignore remember-me errors
         }
-        $_SESSION['login_flash'] = ['type' => 'success', 'message' => 'Signed in successfully.'];
-        $redirect();
+        unset($_SESSION['login_flash']);
+        budget_redirect($self);
     } elseif ($mode === 'resend-code') {
         $flow = $_SESSION['login_flow'] ?? null;
         if (!is_array($flow) || empty($flow['email'])) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
             unset($_SESSION['login_flow']);
-            $redirect();
+            budget_redirect($self);
         }
         $email = (string)$flow['email'];
         $lastSent = (int)($flow['last_sent'] ?? 0);
         if ($lastSent > time() - 30) {
-            $_SESSION['login_flash'] = ['type' => 'info', 'message' => 'Check your email again—the latest code is on the way.'];
-            $redirect();
+            budget_redirect($self);
         }
         $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        [$ok, $err] = budget_send_login_code($email, $code);
-        if ($ok) {
-            $_SESSION['login_flow'] = [
-                'email' => $email,
-                'code_hash' => hash('sha256', $code),
-                'expires' => time() + 600,
-                'attempts' => 0,
-                'last_sent' => time(),
-            ];
-            $_SESSION['login_flash'] = ['type' => 'success', 'message' => 'We sent a fresh code.'];
-        } else {
-            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => $err ?: 'Unable to send the login code.'];
-        }
-        $redirect();
+        $_SESSION['login_flow'] = [
+            'email' => $email,
+            'code_hash' => hash('sha256', $code),
+            'expires' => time() + 600,
+            'attempts' => 0,
+            'last_sent' => time(),
+        ];
+        unset($_SESSION['login_flash']);
+        $afterResponseTasks[] = static function () use ($email, $code): void {
+            [$ok, $err] = budget_send_login_code($email, $code);
+            if (!$ok) {
+                error_log(sprintf('Login resend failed for %s: %s', $email, (string)$err));
+            }
+        };
+        budget_redirect($self, $afterResponseTasks);
     } elseif ($mode === 'change-email') {
         unset($_SESSION['login_flow']);
-        $_SESSION['login_flash'] = ['type' => 'info', 'message' => 'Enter your email to receive a new code.'];
-        $redirect();
+        unset($_SESSION['login_flash']);
+        budget_redirect($self);
     }
 }
 ?>
@@ -540,68 +569,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       <?php else: ?>
         <div class="min-vh-100 d-flex align-items-center justify-content-center">
           <div class="w-100" style="max-width: 360px;">
-            <?php if (!empty($loginFlash['message'])): ?>
-              <?php
-                $flashType = $loginFlash['type'] ?? 'info';
-                $flashClass = 'alert-info';
-                if ($flashType === 'success') { $flashClass = 'alert-success'; }
-                elseif ($flashType === 'danger') { $flashClass = 'alert-danger'; }
-                elseif ($flashType === 'warning') { $flashClass = 'alert-warning'; }
-              ?>
-              <div class="alert <?= $flashClass ?> text-center small" role="alert">
-                <?= htmlspecialchars((string)$loginFlash['message']) ?>
-              </div>
-            <?php endif; ?>
-
             <?php if ($loginStep === 'email'): ?>
               <form method="post" class="w-100" novalidate>
                 <input type="hidden" name="mode" value="request-code">
                 <input type="email"
                        name="email"
-                       class="form-control text-center"
+                       class="form-control text-center<?= $emailErrorMessage !== '' ? ' is-invalid' : '' ?>"
                        aria-label="Email address"
                        autocomplete="email"
                        autocorrect="off"
                        autocapitalize="none"
                        spellcheck="false"
                        required
-                       autofocus>
+                       autofocus<?= $emailErrorMessage !== '' ? ' aria-invalid="true" title="' . htmlspecialchars($emailErrorMessage, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>
                 <button type="submit" class="visually-hidden" aria-hidden="true">Submit</button>
               </form>
             <?php else: ?>
-              <p class="text-center text-body-secondary small mb-3">
-                Enter the 6-digit code sent to <strong><?= htmlspecialchars($pendingEmail) ?></strong>.
-              </p>
-              <form method="post" class="w-100" novalidate>
+              <form method="post" class="w-100" novalidate id="codeForm">
                 <input type="hidden" name="mode" value="verify-code">
                 <input type="text"
+                       id="codeInput"
                        name="code"
-                       class="form-control text-center"
-                       placeholder="Code"
+                       class="form-control text-center<?= $codeErrorMessage !== '' ? ' is-invalid' : '' ?>"
                        aria-label="6-digit code"
                        inputmode="numeric"
                        pattern="[0-9]{6}"
                        autocomplete="one-time-code"
                        maxlength="6"
                        required
-                       autofocus>
+                       autofocus<?= $codeErrorMessage !== '' ? ' aria-invalid="true" title="' . htmlspecialchars($codeErrorMessage, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>
                 <button type="submit" class="visually-hidden" aria-hidden="true">Submit</button>
               </form>
-              <div class="d-flex justify-content-between mt-3 gap-2">
-                <form method="post" class="flex-fill text-start">
-                  <input type="hidden" name="mode" value="change-email">
-                  <button type="submit" class="btn btn-link px-0">Use a different email</button>
-                </form>
-                <form method="post" class="flex-fill text-end">
-                  <input type="hidden" name="mode" value="resend-code">
-                  <button type="submit" class="btn btn-link px-0">Resend code</button>
-                </form>
-              </div>
             <?php endif; ?>
           </div>
         </div>
       <?php endif; ?>
     </main>
+
+    <?php if (!$loggedIn && $loginStep === 'code'): ?>
+      <script>
+      (() => {
+        const form = document.getElementById('codeForm');
+        const input = document.getElementById('codeInput');
+        if (!form || !input) return;
+        const submitHiddenPost = (mode) => {
+          const body = new URLSearchParams({ mode });
+          fetch('', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body
+          }).then(() => window.location.reload());
+        };
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            submitHiddenPost('change-email');
+          }
+          if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
+            event.preventDefault();
+            submitHiddenPost('resend-code');
+          }
+        });
+      })();
+      </script>
+    <?php endif; ?>
 
     <?php if ($loggedIn): ?>
       <!-- Edit Transaction Modal -->
