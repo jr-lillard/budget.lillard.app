@@ -431,15 +431,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;" autocomplete="off" data-1p-ignore="true" data-lpignore="true" novalidate>
             <input type="text"
                    id="loginEmail"
+                   name="alias"
                    class="form-control text-center"
-                   autocomplete="off"
-                    autocorrect="off"
-                    autocapitalize="none"
-                    spellcheck="false"
-                   inputmode="text"
+                   autocomplete="new-password"
+                   autocorrect="off"
+                   autocapitalize="none"
+                   spellcheck="false"
+                   inputmode="email"
                    readonly
-                    data-1p-ignore="true"
-                    data-lpignore="true">
+                   data-1p-ignore="true"
+                   data-lpignore="true">
             <input type="hidden" id="loginUsername" autocomplete="off" data-1p-ignore="true" data-lpignore="true">
             <!-- Keep password placeholder field for backend compatibility but avoid password heuristics -->
             <input type="hidden" id="loginPassword" autocomplete="off" data-1p-ignore="true" data-lpignore="true" value="">
@@ -469,6 +470,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               userField.type = 'hidden';
               userField.name = 'username';
               userField.value = hiddenUser.value;
+              userField.autocomplete = 'off';
               form.appendChild(userField);
             }
             if (!form.querySelector('input[name="password"]')) {
@@ -476,6 +478,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               passField.type = 'hidden';
               passField.name = 'password';
               passField.value = hiddenPass.value;
+              passField.autocomplete = 'off';
               form.appendChild(passField);
             }
           };
