@@ -439,9 +439,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                    inputmode="email"
                    data-1p-ignore="true"
                    data-lpignore="true">
-            <input type="hidden" name="username" id="loginUsername">
-            <!-- Keep password field for backend compatibility but hide it completely -->
-            <input type="password" id="password" name="password" value="" autocomplete="new-password" style="display:none;" data-1p-ignore="true" data-lpignore="true">
+            <input type="hidden" id="loginUsername" autocomplete="off" data-1p-ignore="true" data-lpignore="true">
+            <!-- Keep password placeholder field for backend compatibility but avoid password heuristics -->
+            <input type="hidden" id="loginPassword" autocomplete="off" data-1p-ignore="true" data-lpignore="true" value="">
           </form>
         </div>
         <script>
@@ -449,17 +449,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const form = document.getElementById('loginForm');
           const emailInput = document.getElementById('loginEmail');
           const hiddenUser = document.getElementById('loginUsername');
-          if (!form || !emailInput || !hiddenUser) return;
+          const hiddenPass = document.getElementById('loginPassword');
+          if (!form || !emailInput || !hiddenUser || !hiddenPass) return;
           const sync = () => { hiddenUser.value = emailInput.value.trim(); };
+          const injectFields = () => {
+            if (!form.querySelector('input[name="username"]')) {
+              const userField = document.createElement('input');
+              userField.type = 'hidden';
+              userField.name = 'username';
+              userField.value = hiddenUser.value;
+              form.appendChild(userField);
+            }
+            if (!form.querySelector('input[name="password"]')) {
+              const passField = document.createElement('input');
+              passField.type = 'hidden';
+              passField.name = 'password';
+              passField.value = hiddenPass.value;
+              form.appendChild(passField);
+            }
+          };
           emailInput.addEventListener('input', sync);
           emailInput.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') {
               ev.preventDefault();
               sync();
+              injectFields();
               form.submit();
             }
           });
-          form.addEventListener('submit', sync);
+          form.addEventListener('submit', () => {
+            sync();
+            injectFields();
+          });
           window.addEventListener('load', () => { emailInput.focus(); });
         })();
         </script>
