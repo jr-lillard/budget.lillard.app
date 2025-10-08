@@ -479,8 +479,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               form.appendChild(passField);
             }
           };
-          emailInput.addEventListener('focus', ensureEditable, { once: true });
-          emailInput.addEventListener('mousedown', ensureEditable, { once: true });
+          const pointerActivate = (ev) => {
+            if (emailInput.hasAttribute('readonly')) {
+              ev.preventDefault();
+              ensureEditable();
+              window.requestAnimationFrame(() => emailInput.focus({ preventScroll: true }));
+            }
+          };
+          emailInput.addEventListener('mousedown', pointerActivate);
+          emailInput.addEventListener('touchstart', pointerActivate, { passive: false });
+          emailInput.addEventListener('focus', ensureEditable);
           emailInput.addEventListener('keydown', (ev) => {
             if (ev.key !== 'Tab') ensureEditable();
           });
