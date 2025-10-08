@@ -21,33 +21,145 @@ if (isset($_GET['logout'])) {
 
 $pageTitle = 'Budget';
 $loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
-$loginError = '';
 $recentTx = [];
 $recentError = '';
 
+/**
+ * Send a one-time login code to the given email address.
+ * Returns [bool ok, string message].
+ */
+function budget_send_login_code(string $email, string $code): array
+{
+    $subject = 'Budget login code';
+    $safeCode = htmlspecialchars($code, ENT_QUOTES, 'UTF-8');
+    $html = <<<HTML
+<p>Your Budget login code is <strong style="font-size: 1.25rem;">{$safeCode}</strong>.</p>
+<p>Enter this code in the Budget app within 10 minutes.</p>
+HTML;
+    $text = "Your Budget login code is {$code}.\nEnter this code in the Budget app within 10 minutes.\n";
+    return send_mail_via_smtp2go($email, $subject, $html, $text, null);
+}
+
+$loginFlash = $_SESSION['login_flash'] ?? [];
+unset($_SESSION['login_flash']);
+
+$loginFlow = $_SESSION['login_flow'] ?? null;
+$loginStep = 'email';
+if (is_array($loginFlow) && isset($loginFlow['email'], $loginFlow['code_hash'], $loginFlow['expires']) && (int)$loginFlow['expires'] >= time()) {
+    $loginStep = 'code';
+} else {
+    $loginFlow = null;
+    unset($_SESSION['login_flow']);
+}
+$pendingEmail = is_array($loginFlow) ? (string)$loginFlow['email'] : '';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
-    $username = trim((string)($_POST['username'] ?? ''));
-    $password = (string)($_POST['password'] ?? '');
-    if ($username !== '' && $password !== '') {
-        try {
-            $pdo = get_mysql_connection();
-            $stmt = $pdo->prepare('SELECT password_hash FROM users WHERE username = ?');
-            $stmt->execute([$username]);
-            $hash = $stmt->fetchColumn();
-            if ($hash && password_verify($password, (string)$hash)) {
-                $_SESSION['username'] = $username;
-                // Issue persistent remember-me cookie for this device
-                try { auth_issue_remember_cookie($pdo, $username); } catch (Throwable $e) { /* ignore */ }
-                header('Location: ' . (string)($_SERVER['PHP_SELF'] ?? 'index.php'));
-                exit;
-            } else {
-                $loginError = 'Invalid username or password.';
-            }
-        } catch (Throwable $e) {
-            $loginError = 'Login error. Please try again later.';
+    $mode = (string)($_POST['mode'] ?? '');
+    $self = (string)($_SERVER['PHP_SELF'] ?? 'index.php');
+    $redirect = function () use ($self): void {
+        header('Location: ' . $self);
+        exit;
+    };
+
+    if ($mode === 'request-code') {
+        $email = trim((string)($_POST['email'] ?? ''));
+        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter a valid email address.'];
+            unset($_SESSION['login_flow']);
+            $redirect();
         }
-    } else {
-        $loginError = 'Please enter username and password.';
+
+        $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        [$ok, $err] = budget_send_login_code($email, $code);
+        if ($ok) {
+            $_SESSION['login_flow'] = [
+                'email' => $email,
+                'code_hash' => hash('sha256', $code),
+                'expires' => time() + 600,
+                'attempts' => 0,
+                'last_sent' => time(),
+            ];
+            $_SESSION['login_flash'] = ['type' => 'success', 'message' => 'We emailed a 6-digit code.'];
+        } else {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => $err ?: 'Unable to send the login code.'];
+            unset($_SESSION['login_flow']);
+        }
+        $redirect();
+    } elseif ($mode === 'verify-code') {
+        $flow = $_SESSION['login_flow'] ?? null;
+        $codeDigits = preg_replace('/[^0-9]/', '', (string)($_POST['code'] ?? ''));
+        if (!is_array($flow) || !isset($flow['email'], $flow['code_hash'], $flow['expires'])) {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
+            unset($_SESSION['login_flow']);
+            $redirect();
+        }
+        if ((int)$flow['expires'] < time()) {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'That code expired. Request a new one.'];
+            unset($_SESSION['login_flow']);
+            $redirect();
+        }
+        if (strlen($codeDigits) !== 6) {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter the 6-digit code from the email.'];
+            $redirect();
+        }
+        $expected = (string)$flow['code_hash'];
+        $actual = hash('sha256', $codeDigits);
+        if (!hash_equals($expected, $actual)) {
+            $attempts = (int)($flow['attempts'] ?? 0) + 1;
+            if ($attempts >= 5) {
+                unset($_SESSION['login_flow']);
+                $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Too many attempts. Request a new code.'];
+            } else {
+                $flow['attempts'] = $attempts;
+                $_SESSION['login_flow'] = $flow;
+                $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Incorrect code. Try again.'];
+            }
+            $redirect();
+        }
+
+        unset($_SESSION['login_flow']);
+        $email = (string)$flow['email'];
+        $_SESSION['username'] = $email;
+        try {
+            $pdo = $pdo ?? get_mysql_connection();
+            auth_issue_remember_cookie($pdo, $email);
+        } catch (Throwable $e) {
+            // ignore remember-me errors
+        }
+        $_SESSION['login_flash'] = ['type' => 'success', 'message' => 'Signed in successfully.'];
+        $redirect();
+    } elseif ($mode === 'resend-code') {
+        $flow = $_SESSION['login_flow'] ?? null;
+        if (!is_array($flow) || empty($flow['email'])) {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
+            unset($_SESSION['login_flow']);
+            $redirect();
+        }
+        $email = (string)$flow['email'];
+        $lastSent = (int)($flow['last_sent'] ?? 0);
+        if ($lastSent > time() - 30) {
+            $_SESSION['login_flash'] = ['type' => 'info', 'message' => 'Check your email again—the latest code is on the way.'];
+            $redirect();
+        }
+        $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        [$ok, $err] = budget_send_login_code($email, $code);
+        if ($ok) {
+            $_SESSION['login_flow'] = [
+                'email' => $email,
+                'code_hash' => hash('sha256', $code),
+                'expires' => time() + 600,
+                'attempts' => 0,
+                'last_sent' => time(),
+            ];
+            $_SESSION['login_flash'] = ['type' => 'success', 'message' => 'We sent a fresh code.'];
+        } else {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => $err ?: 'Unable to send the login code.'];
+        }
+        $redirect();
+    } elseif ($mode === 'change-email') {
+        unset($_SESSION['login_flow']);
+        $_SESSION['login_flash'] = ['type' => 'info', 'message' => 'Enter your email to receive a new code.'];
+        $redirect();
     }
 }
 ?>
@@ -426,91 +538,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           <?php endif; ?>
         </div>
       <?php else: ?>
-        <!-- Discreet login: single centered email input, no labels, no buttons -->
-        <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh;">
-          <form method="post" action="" id="loginForm" class="w-100" style="max-width: 360px;" autocomplete="off" data-1p-ignore="true" data-lpignore="true" novalidate>
-            <input type="text"
-                   id="loginEmail"
-                   name="alias"
-                   class="form-control text-center"
-                   autocomplete="new-password"
-                   autocorrect="off"
-                   autocapitalize="none"
-                   spellcheck="false"
-                   inputmode="email"
-                   readonly
-                   data-1p-ignore="true"
-                   data-lpignore="true">
-            <input type="hidden" id="loginUsername" autocomplete="off" data-1p-ignore="true" data-lpignore="true">
-            <!-- Keep password placeholder field for backend compatibility but avoid password heuristics -->
-            <input type="hidden" id="loginPassword" autocomplete="off" data-1p-ignore="true" data-lpignore="true" value="">
-          </form>
+        <div class="min-vh-100 d-flex align-items-center justify-content-center">
+          <div class="w-100" style="max-width: 360px;">
+            <?php if (!empty($loginFlash['message'])): ?>
+              <?php
+                $flashType = $loginFlash['type'] ?? 'info';
+                $flashClass = 'alert-info';
+                if ($flashType === 'success') { $flashClass = 'alert-success'; }
+                elseif ($flashType === 'danger') { $flashClass = 'alert-danger'; }
+                elseif ($flashType === 'warning') { $flashClass = 'alert-warning'; }
+              ?>
+              <div class="alert <?= $flashClass ?> text-center small" role="alert">
+                <?= htmlspecialchars((string)$loginFlash['message']) ?>
+              </div>
+            <?php endif; ?>
+
+            <?php if ($loginStep === 'email'): ?>
+              <form method="post" class="w-100" novalidate>
+                <input type="hidden" name="mode" value="request-code">
+                <input type="email"
+                       name="email"
+                       class="form-control text-center"
+                       placeholder="Email"
+                       aria-label="Email address"
+                       autocomplete="email"
+                       autocorrect="off"
+                       autocapitalize="none"
+                       spellcheck="false"
+                       required
+                       autofocus>
+                <button type="submit" class="visually-hidden" aria-hidden="true">Submit</button>
+              </form>
+            <?php else: ?>
+              <p class="text-center text-body-secondary small mb-3">
+                Enter the 6-digit code sent to <strong><?= htmlspecialchars($pendingEmail) ?></strong>.
+              </p>
+              <form method="post" class="w-100" novalidate>
+                <input type="hidden" name="mode" value="verify-code">
+                <input type="text"
+                       name="code"
+                       class="form-control text-center"
+                       placeholder="Code"
+                       aria-label="6-digit code"
+                       inputmode="numeric"
+                       pattern="[0-9]{6}"
+                       autocomplete="one-time-code"
+                       maxlength="6"
+                       required
+                       autofocus>
+                <button type="submit" class="visually-hidden" aria-hidden="true">Submit</button>
+              </form>
+              <div class="d-flex justify-content-between mt-3 gap-2">
+                <form method="post" class="flex-fill text-start">
+                  <input type="hidden" name="mode" value="change-email">
+                  <button type="submit" class="btn btn-link px-0">Use a different email</button>
+                </form>
+                <form method="post" class="flex-fill text-end">
+                  <input type="hidden" name="mode" value="resend-code">
+                  <button type="submit" class="btn btn-link px-0">Resend code</button>
+                </form>
+              </div>
+            <?php endif; ?>
+          </div>
         </div>
-        <script>
-        (() => {
-          const form = document.getElementById('loginForm');
-          const emailInput = document.getElementById('loginEmail');
-          const hiddenUser = document.getElementById('loginUsername');
-          const hiddenPass = document.getElementById('loginPassword');
-          if (!form || !emailInput || !hiddenUser || !hiddenPass) return;
-          const sync = () => { hiddenUser.value = emailInput.value.trim(); };
-          const ensureEditable = () => {
-            if (emailInput.hasAttribute('readonly')) {
-              emailInput.removeAttribute('readonly');
-              // Move cursor to end after removing readonly
-              window.requestAnimationFrame(() => {
-                const len = emailInput.value.length;
-                emailInput.setSelectionRange(len, len);
-              });
-            }
-          };
-          const injectFields = () => {
-            if (!form.querySelector('input[name="username"]')) {
-              const userField = document.createElement('input');
-              userField.type = 'hidden';
-              userField.name = 'username';
-              userField.value = hiddenUser.value;
-              userField.autocomplete = 'off';
-              form.appendChild(userField);
-            }
-            if (!form.querySelector('input[name="password"]')) {
-              const passField = document.createElement('input');
-              passField.type = 'hidden';
-              passField.name = 'password';
-              passField.value = hiddenPass.value;
-              passField.autocomplete = 'off';
-              form.appendChild(passField);
-            }
-          };
-          const pointerActivate = (ev) => {
-            if (emailInput.hasAttribute('readonly')) {
-              ev.preventDefault();
-              ensureEditable();
-              window.requestAnimationFrame(() => emailInput.focus({ preventScroll: true }));
-            }
-          };
-          emailInput.addEventListener('mousedown', pointerActivate);
-          emailInput.addEventListener('touchstart', pointerActivate, { passive: false });
-          emailInput.addEventListener('focus', ensureEditable);
-          emailInput.addEventListener('keydown', (ev) => {
-            if (ev.key !== 'Tab') ensureEditable();
-          });
-          emailInput.addEventListener('input', sync);
-          emailInput.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') {
-              ev.preventDefault();
-              sync();
-              injectFields();
-              form.submit();
-            }
-          });
-          form.addEventListener('submit', () => {
-            sync();
-            injectFields();
-          });
-          // Do not autofocus; awaiting intentional user interaction prevents Safari heuristics
-        })();
-        </script>
       <?php endif; ?>
     </main>
 
