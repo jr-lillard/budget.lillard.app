@@ -28,6 +28,9 @@ $row = [
 
 try {
     $pdo = get_mysql_connection();
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    $owner = budget_canonical_user((string)$_SESSION['username']);
     // Save
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int)($_POST['id'] ?? 0);
@@ -59,7 +62,8 @@ try {
             $accountId = (int)$get->fetchColumn();
         }
 
-        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, category = :category, tags = :tags WHERE id = :id';
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, category = :category, tags = :tags, updated_at_source = NOW()
+                WHERE id = :id AND owner = :owner';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':account_id' => $accountId ?: null,
@@ -71,14 +75,15 @@ try {
             ':category' => $category !== '' ? $category : null,
             ':tags' => $tags !== '' ? $tags : null,
             ':id' => $id,
+            ':owner' => $owner,
         ]);
         $saved = true;
     }
 
     // Fetch row (after possible save)
     if ($id > 0) {
-        $stmt = $pdo->prepare('SELECT t.*, a.name AS account_name FROM transactions t LEFT JOIN accounts a ON a.id = t.account_id WHERE t.id = ?');
-        $stmt->execute([$id]);
+        $stmt = $pdo->prepare('SELECT t.*, a.name AS account_name FROM transactions t LEFT JOIN accounts a ON a.id = t.account_id WHERE t.id = ? AND t.owner = ?');
+        $stmt->execute([$id, $owner]);
         $tmp = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($tmp) { $row = array_merge($row, $tmp); }
     }

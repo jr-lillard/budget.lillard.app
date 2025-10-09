@@ -20,7 +20,12 @@ if (isset($_GET['logout'])) {
 }
 
 $pageTitle = 'Budget';
-$loggedIn = isset($_SESSION['username']) && $_SESSION['username'] !== '';
+$sessionUser = isset($_SESSION['username']) ? budget_canonical_user((string)$_SESSION['username']) : '';
+if ($sessionUser !== ($_SESSION['username'] ?? '')) {
+    $_SESSION['username'] = $sessionUser;
+}
+$loggedIn = $sessionUser !== '';
+$currentUser = $sessionUser;
 $recentTx = [];
 $recentError = '';
 
@@ -79,7 +84,6 @@ if (is_array($loginFlow) && isset($loginFlow['email'], $loginFlow['code_hash'], 
     $loginFlow = null;
     unset($_SESSION['login_flow']);
 }
-$pendingEmail = is_array($loginFlow) ? (string)$loginFlow['email'] : '';
 $afterResponseTasks = [];
 $flashMessage = trim((string)($loginFlash['message'] ?? ''));
 $flashType = $loginFlash['type'] ?? '';
@@ -98,9 +102,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             budget_redirect($self);
         }
 
+        $canonicalEmail = budget_canonical_user($email);
+
         $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         $_SESSION['login_flow'] = [
-            'email' => $email,
+            'email' => $canonicalEmail,
             'code_hash' => hash('sha256', $code),
             'expires' => time() + 600,
             'attempts' => 0,
@@ -147,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         }
 
         unset($_SESSION['login_flow']);
-        $email = (string)$flow['email'];
+        $email = budget_canonical_user((string)$flow['email']);
         $_SESSION['username'] = $email;
         try {
             $pdo = $pdo ?? get_mysql_connection();
@@ -240,6 +246,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
             try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
             $limit = 50; // recent rows to show
+            $defaultOwner = budget_default_owner();
+            budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+            budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
+            $owner = $currentUser;
             // Remember account filter for the session
             $filterAccountId = 0;
             if (array_key_exists('account_id', $_GET)) {
@@ -251,12 +261,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $filterAccountId = (int)$_SESSION['tx_filter_account_id'];
             }
 
-            $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source, 
+            $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
                        t.account_id, a.name AS account_name
                     FROM transactions t
-                    LEFT JOIN accounts a ON a.id = t.account_id';
-            $params = [];
-            if ($filterAccountId > 0) { $sql .= ' WHERE t.account_id = ?'; $params[] = $filterAccountId; }
+                    LEFT JOIN accounts a ON a.id = t.account_id
+                    WHERE t.owner = ?';
+            $params = [$owner];
+            if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; $params[] = $filterAccountId; }
             $sql .= ' ORDER BY COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
             $params[] = $limit;
             $stmt = $pdo->prepare($sql);
@@ -264,8 +275,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             // Compute total sum across all matching transactions (exclude scheduled), not limited
-            $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t WHERE COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) <> 0';
-            $sumParams = [];
+            $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t WHERE t.owner = ? AND COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) <> 0';
+            $sumParams = [$owner];
             if ($filterAccountId > 0) { $sumSql .= ' AND t.account_id = ?'; $sumParams[] = $filterAccountId; }
             $sumStmt = $pdo->prepare($sumSql);
             $sumStmt->execute($sumParams);
@@ -274,8 +285,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $totalCount = (int)($sumRow['cnt'] ?? 0);
 
             // Compute posted-only total across matching transactions (not limited)
-            $postedSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t WHERE t.posted = 1';
-            $postedParams = [];
+            $postedSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt FROM transactions t WHERE t.owner = ? AND t.posted = 1';
+            $postedParams = [$owner];
             if ($filterAccountId > 0) { $postedSql .= ' AND t.account_id = ?'; $postedParams[] = $filterAccountId; }
             $postedStmt = $pdo->prepare($postedSql);
             $postedStmt->execute($postedParams);
@@ -284,8 +295,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $postedTotalCount = (int)($postedRow['cnt'] ?? 0);
 
             // Scheduled sum (for projected balance) from transactions.status = 0
-            $schedSumSql = 'SELECT COALESCE(SUM(t.amount),0) AS total FROM transactions t WHERE COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0';
-            $schedSumParams = [];
+            $schedSumSql = 'SELECT COALESCE(SUM(t.amount),0) AS total FROM transactions t WHERE t.owner = ? AND COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0';
+            $schedSumParams = [$owner];
             if ($filterAccountId > 0) { $schedSumSql .= ' AND t.account_id = ?'; $schedSumParams[] = $filterAccountId; }
             $schedSumStmt = $pdo->prepare($schedSumSql);
             $schedSumStmt->execute($schedSumParams);
@@ -295,9 +306,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $accSql = "SELECT DISTINCT a.id, a.name
                        FROM accounts a
                        JOIN transactions t ON t.account_id = a.id
-                       WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+                       WHERE t.owner = ?
+                         AND t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
                        ORDER BY a.name ASC";
-            $accStmt = $pdo->query($accSql);
+            $accStmt = $pdo->prepare($accSql);
+            $accStmt->execute([$owner]);
             $accPairs = $accStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
             if ($filterAccountId > 0 && !isset($accPairs[$filterAccountId])) {
               $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');
@@ -310,10 +323,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
             // Descriptions (distinct) from last 3 months for autocomplete
             $descSql = "SELECT DISTINCT description FROM transactions
-                        WHERE description IS NOT NULL AND description <> ''
+                        WHERE owner = ?
+                          AND description IS NOT NULL AND description <> ''
                           AND `date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
                         ORDER BY description ASC LIMIT 200";
-            $descStmt = $pdo->query($descSql);
+            $descStmt = $pdo->prepare($descSql);
+            $descStmt->execute([$owner]);
             $descriptions = $descStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
           } catch (Throwable $e) {
             $recentError = 'Unable to load recent transactions.';

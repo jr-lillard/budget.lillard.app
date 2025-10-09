@@ -16,6 +16,10 @@ $rows = [];
 
 try {
     $pdo = get_mysql_connection();
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    $owner = budget_canonical_user((string)$_SESSION['username']);
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
@@ -23,8 +27,10 @@ try {
                     r.account_id, r.account_name AS reminder_account_name, a.name AS bank_account_name
             FROM reminders r
             LEFT JOIN accounts a ON a.id = r.account_id
+            WHERE r.owner = ?
             ORDER BY r.due ASC, r.updated_at DESC';
-    $stmt = $pdo->query($sql);
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$owner]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     // Backfill structured frequency columns from free-form frequency
     // IMPORTANT: Only set these once when both are currently NULL.
@@ -108,10 +114,12 @@ try {
   try {
     $accSql = "SELECT DISTINCT TRIM(r.account_name) AS name
                FROM reminders r
-               WHERE TRIM(r.account_name) IS NOT NULL
+               WHERE r.owner = ?
+                 AND TRIM(r.account_name) IS NOT NULL
                  AND TRIM(r.account_name) <> ''
                ORDER BY name ASC";
-    $accStmt = $pdo->query($accSql);
+    $accStmt = $pdo->prepare($accSql);
+    $accStmt->execute([$owner]);
     $reminderAccounts = $accStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
   } catch (Throwable $e) { $reminderAccounts = []; }
 
@@ -125,9 +133,11 @@ try {
     $accSql2 = "SELECT DISTINCT a.id, a.name
                 FROM accounts a
                 JOIN transactions t ON t.account_id = a.id
-                WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+                WHERE t.owner = ?
+                  AND t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
                 ORDER BY a.name ASC";
-    $accStmt2 = $pdo->query($accSql2);
+    $accStmt2 = $pdo->prepare($accSql2);
+    $accStmt2->execute([$owner]);
     $txAccPairs = $accStmt2->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
     if ($filterAccountId > 0 && !isset($txAccPairs[$filterAccountId])) {
       $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');

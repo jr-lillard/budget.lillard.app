@@ -31,6 +31,38 @@ function get_mysql_connection(): PDO
     return $pdo;
 }
 
+function budget_canonical_user(string $identifier): string
+{
+    return strtolower(trim($identifier));
+}
+
+function budget_default_owner(): string
+{
+    return 'jr@lillard.org';
+}
+
+function budget_ensure_owner_column(PDO $pdo, string $table, string $column = 'owner', ?string $assignOwnerForNull = null): void
+{
+    if (!preg_match('/^[A-Za-z0-9_]+$/', $table) || !preg_match('/^[A-Za-z0-9_]+$/', $column)) {
+        return;
+    }
+    $tableName = "`{$table}`";
+    $columnName = "`{$column}`";
+    try {
+        $pdo->exec("ALTER TABLE {$tableName} ADD COLUMN {$columnName} VARCHAR(190) NULL");
+    } catch (Throwable $e) {
+        // ignore if column already exists
+    }
+    if ($assignOwnerForNull !== null && $assignOwnerForNull !== '') {
+        try {
+            $upd = $pdo->prepare("UPDATE {$tableName} SET {$columnName} = :owner WHERE {$columnName} IS NULL OR {$columnName} = ''");
+            $upd->execute([':owner' => $assignOwnerForNull]);
+        } catch (Throwable $e) {
+            // best effort only
+        }
+    }
+}
+
 /**
  * Persistent login ("remember me") helpers.
  * Implements a selector/validator token stored server-side and in a secure cookie.

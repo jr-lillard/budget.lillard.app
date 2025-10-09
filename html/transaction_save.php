@@ -26,11 +26,14 @@ try {
     } catch (Throwable $e) {
         // ignore if exists
     }
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
     // Ensure legacy fm_pk is nullable so we can stop using it
     try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
     $id = (int)($_POST['id'] ?? 0);
     // New vs update
     $isInsert = ($id <= 0);
+    $owner = budget_canonical_user((string)$_SESSION['username']);
 
     $date = trim((string)($_POST['date'] ?? ''));
     $amount = trim((string)($_POST['amount'] ?? ''));
@@ -90,8 +93,8 @@ try {
     $postedInt = ($statusVal === 2) ? 1 : 0;
 
     if ($isInsert) {
-        $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, created_at_source, updated_at_source)
-                VALUES (:account_id, :date, :amount, :description, :check_no, :posted, :status, NOW(), NOW())';
+        $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
+                VALUES (:account_id, :date, :amount, :description, :check_no, :posted, :status, :owner, NOW(), NOW())';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':account_id' => $accountId ?: null,
@@ -101,11 +104,13 @@ try {
             ':check_no' => $checkNo !== '' ? $checkNo : null,
             ':posted' => $postedInt,
             ':status' => $statusVal,
+            ':owner' => $owner,
         ]);
         $newId = (int)$pdo->lastInsertId();
         echo json_encode(['ok' => true, 'id' => $newId]);
     } else {
-        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status WHERE id = :id';
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status, updated_at_source = NOW()
+                WHERE id = :id AND owner = :owner';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':account_id' => $accountId ?: null,
@@ -116,7 +121,13 @@ try {
             ':posted' => $postedInt,
             ':status' => $statusVal,
             ':id' => $id,
+            ':owner' => $owner,
         ]);
+        if ($stmt->rowCount() === 0) {
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'error' => 'Not found']);
+            return;
+        }
         echo json_encode(['ok' => true, 'id' => $id]);
     }
 } catch (Throwable $e) {

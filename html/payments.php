@@ -20,6 +20,9 @@ $postedTotalCount = 0;
 
 try {
     $pdo = get_mysql_connection();
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    $owner = budget_canonical_user((string)$_SESSION['username']);
     $limit = 100; // show more by default for payments
     $filterAccountId = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
 
@@ -55,9 +58,10 @@ try {
                    t.account_id, a.name AS account_name
             FROM transactions t
             LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.description = ?
+            WHERE t.owner = ?
+              AND t.description = ?
               AND t.`date` >= ? AND t.`date` < DATE_ADD(?, INTERVAL 1 MONTH)';
-    $params = ['Payment', $startDate, $startDate];
+    $params = [$owner, 'Payment', $startDate, $startDate];
     if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; $params[] = $filterAccountId; }
     $sql .= ' ORDER BY t.posted ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
     $params[] = $limit;
@@ -68,9 +72,10 @@ try {
     // Totals (not limited) for payments in selected month
     $sumSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
                FROM transactions t
-               WHERE t.description = ?
+               WHERE t.owner = ?
+                 AND t.description = ?
                  AND t.`date` >= ? AND t.`date` < DATE_ADD(?, INTERVAL 1 MONTH)';
-    $sumParams = ['Payment', $startDate, $startDate];
+    $sumParams = [$owner, 'Payment', $startDate, $startDate];
     if ($filterAccountId > 0) { $sumSql .= ' AND t.account_id = ?'; $sumParams[] = $filterAccountId; }
     $sumStmt = $pdo->prepare($sumSql);
     $sumStmt->execute($sumParams);
@@ -81,9 +86,9 @@ try {
     // Posted-only totals for selected month
     $postedSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
                   FROM transactions t
-                  WHERE t.description = ? AND t.posted = 1
+                  WHERE t.owner = ? AND t.description = ? AND t.posted = 1
                     AND t.`date` >= ? AND t.`date` < DATE_ADD(?, INTERVAL 1 MONTH)';
-    $postedParams = ['Payment', $startDate, $startDate];
+    $postedParams = [$owner, 'Payment', $startDate, $startDate];
     if ($filterAccountId > 0) { $postedSql .= ' AND t.account_id = ?'; $postedParams[] = $filterAccountId; }
     $postedStmt = $pdo->prepare($postedSql);
     $postedStmt->execute($postedParams);
@@ -94,8 +99,8 @@ try {
     // Year totals and monthly average for the selected year (current year is YTD)
     $yearSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
                 FROM transactions t
-                WHERE t.description = ? AND t.`date` >= ? AND t.`date` < ?';
-    $yearParams = ['Payment', $yearStart, $yearEnd];
+                WHERE t.owner = ? AND t.description = ? AND t.`date` >= ? AND t.`date` < ?';
+    $yearParams = [$owner, 'Payment', $yearStart, $yearEnd];
     if ($filterAccountId > 0) { $yearSql .= ' AND t.account_id = ?'; $yearParams[] = $filterAccountId; }
     $yearStmt = $pdo->prepare($yearSql);
     $yearStmt->execute($yearParams);
@@ -107,8 +112,8 @@ try {
     // Previous year totals and average
     $prevYearSql = 'SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
                     FROM transactions t
-                    WHERE t.description = ? AND t.`date` >= ? AND t.`date` < ?';
-    $prevYearParams = ['Payment', $prevYearStart, $prevYearEnd];
+                    WHERE t.owner = ? AND t.description = ? AND t.`date` >= ? AND t.`date` < ?';
+    $prevYearParams = [$owner, 'Payment', $prevYearStart, $prevYearEnd];
     if ($filterAccountId > 0) { $prevYearSql .= ' AND t.account_id = ?'; $prevYearParams[] = $filterAccountId; }
     $prevYearStmt = $pdo->prepare($prevYearSql);
     $prevYearStmt->execute($prevYearParams);
@@ -121,9 +126,11 @@ try {
     $accSql = "SELECT DISTINCT a.id, a.name
                FROM accounts a
                JOIN transactions t ON t.account_id = a.id
-               WHERE t.`date` >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+               WHERE t.owner = :owner
+                 AND t.`date` >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
                ORDER BY a.name ASC";
-    $accStmt = $pdo->query($accSql);
+    $accStmt = $pdo->prepare($accSql);
+    $accStmt->execute([':owner' => $owner]);
     $accPairs = $accStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
     if ($filterAccountId > 0 && !isset($accPairs[$filterAccountId])) {
         $nm = $pdo->prepare('SELECT name FROM accounts WHERE id = ?');
@@ -136,10 +143,12 @@ try {
 
     // Descriptions from last 6 months for autocomplete
     $descSql = "SELECT DISTINCT description FROM transactions
-                WHERE description IS NOT NULL AND description <> ''
+                WHERE owner = ?
+                  AND description IS NOT NULL AND description <> ''
                   AND `date` >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
                 ORDER BY description ASC LIMIT 200";
-    $descStmt = $pdo->query($descSql);
+    $descStmt = $pdo->prepare($descSql);
+    $descStmt->execute([$owner]);
     $descriptions = $descStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
 } catch (Throwable $e) {
     $error = 'Unable to load payments.';

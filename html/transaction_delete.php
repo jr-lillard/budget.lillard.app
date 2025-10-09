@@ -20,12 +20,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 
 try {
     $pdo = get_mysql_connection();
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    $owner = budget_canonical_user((string)$_SESSION['username']);
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {
         throw new RuntimeException('Invalid id');
     }
-    $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id');
-    $stmt->execute([':id' => $id]);
+    $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id AND owner = :owner');
+    $stmt->execute([':id' => $id, ':owner' => $owner]);
     if ($stmt->rowCount() < 1) {
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Not found']);

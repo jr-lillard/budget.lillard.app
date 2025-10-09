@@ -20,11 +20,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 try {
     $pdo = get_mysql_connection();
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }
     // Ensure legacy fm_pk is nullable so we can stop using it
     try { $pdo->exec("ALTER TABLE reminders MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
+    $owner = budget_canonical_user((string)$_SESSION['username']);
     $id = (int)($_POST['id'] ?? 0);
     $due = trim((string)($_POST['due'] ?? ''));
     $amount = trim((string)($_POST['amount'] ?? ''));
@@ -101,7 +104,8 @@ try {
 
     if ($id <= 0) {
         // Insert new reminder (no fm_pk)
-        $stmt = $pdo->prepare('INSERT INTO reminders (account_id, account_name, description, amount, due, frequency, frequency_every, frequency_unit, created_at_source, updated_at_source) VALUES (?,?,?,?,?,?,?,?,NOW(),NOW())');
+        $stmt = $pdo->prepare('INSERT INTO reminders (account_id, account_name, description, amount, due, frequency, frequency_every, frequency_unit, owner, created_at_source, updated_at_source)
+                               VALUES (?,?,?,?,?,?,?,?,?,NOW(),NOW())');
         $stmt->execute([
             $accountId ?: null,
             $accountNameOut,
@@ -111,11 +115,13 @@ try {
             $freq !== '' ? $freq : null,
             $parsedEvery,
             $parsedUnit,
+            $owner,
         ]);
         $newId = (int)$pdo->lastInsertId();
         echo json_encode(['ok' => true, 'id' => $newId]);
     } else {
-        $stmt = $pdo->prepare('UPDATE reminders SET account_id = :account_id, account_name = :account_name, description = :description, amount = :amount, due = :due, frequency = :frequency, frequency_every = :frequency_every, frequency_unit = :frequency_unit WHERE id = :id');
+        $stmt = $pdo->prepare('UPDATE reminders SET account_id = :account_id, account_name = :account_name, description = :description, amount = :amount, due = :due, frequency = :frequency, frequency_every = :frequency_every, frequency_unit = :frequency_unit, updated_at_source = NOW()
+                               WHERE id = :id AND owner = :owner');
         $stmt->execute([
             ':account_id' => $accountId ?: null,
             ':account_name' => $accountNameOut,
@@ -126,7 +132,13 @@ try {
             ':frequency_every' => $parsedEvery,
             ':frequency_unit' => $parsedUnit,
             ':id' => $id,
+            ':owner' => $owner,
         ]);
+        if ($stmt->rowCount() === 0) {
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'error' => 'Not found']);
+            return;
+        }
         echo json_encode(['ok' => true, 'id' => $id]);
     }
 } catch (Throwable $e) {

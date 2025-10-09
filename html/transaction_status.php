@@ -22,6 +22,9 @@ try {
     $pdo = get_mysql_connection();
     // Ensure status column exists
     try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore */ }
+    $defaultOwner = budget_default_owner();
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    $owner = budget_canonical_user((string)$_SESSION['username']);
 
     $id = (int)($_POST['id'] ?? 0);
     $rawStatus = $_POST['status'] ?? null;
@@ -41,11 +44,13 @@ try {
     $setDateToday = ($status === 1 || $status === 2);
     if ($setDateToday) {
         $today = date('Y-m-d');
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today WHERE id = :id');
-        $stmt->execute([':status' => $status, ':posted' => $posted, ':today' => $today, ':id' => $id]);
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today, updated_at_source = NOW()
+                               WHERE id = :id AND owner = :owner');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':today' => $today, ':id' => $id, ':owner' => $owner]);
     } else {
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted WHERE id = :id');
-        $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id]);
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, updated_at_source = NOW()
+                               WHERE id = :id AND owner = :owner');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id, ':owner' => $owner]);
     }
     if ($stmt->rowCount() < 1) {
         http_response_code(404);
