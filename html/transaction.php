@@ -10,6 +10,11 @@ if (!isset($_SESSION['username']) || $_SESSION['username'] === '') {
     exit;
 }
 
+$currentUser = budget_canonical_user((string)($_SESSION['username'] ?? ''));
+if ($currentUser !== ($_SESSION['username'] ?? '')) {
+    $_SESSION['username'] = $currentUser;
+}
+
 $pageTitle = 'Edit Transaction';
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $error = '';
@@ -109,9 +114,24 @@ try {
       <div class="container-fluid position-relative">
         <a class="btn btn-outline-secondary btn-sm" href="index.php">← Back</a>
         <span class="navbar-brand mx-auto">Edit Transaction</span>
-        <span class="position-absolute end-0 top-50 translate-middle-y text-body-secondary small d-none d-sm-inline"><?= htmlspecialchars((string)($_SESSION['username'] ?? '')) ?></span>
+        <div class="position-absolute end-0 top-50 translate-middle-y">
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#userMenu" aria-controls="userMenu" aria-label="Account menu">
+            <i class="bi bi-list"></i>
+          </button>
+        </div>
       </div>
     </nav>
+
+    <div class="offcanvas offcanvas-end" tabindex="-1" id="userMenu" aria-labelledby="userMenuLabel">
+      <div class="offcanvas-header">
+        <h5 class="offcanvas-title" id="userMenuLabel">Account</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+      </div>
+      <div class="offcanvas-body">
+        <p class="text-body-secondary small mb-3">Signed in as<br><strong><?= htmlspecialchars($currentUser) ?></strong></p>
+        <a class="btn btn-outline-secondary w-100" href="index.php?logout=1">Logout</a>
+      </div>
+    </div>
 
     <main class="container my-4" style="max-width: 720px;">
       <?php if ($saved): ?>
