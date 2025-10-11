@@ -176,7 +176,7 @@ try {
           <button type="button" class="btn btn-sm btn-success" id="addTxBtn">+ Add Payment</button>
           <a class="btn btn-sm btn-outline-secondary" href="reminders.php">Reminders</a>
           <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#userMenu" aria-controls="userMenu" aria-label="Account menu">
-            <i class="bi bi-list"></i>
+            <i class="bi bi-list fs-4"></i>
           </button>
         </div>
       </div>

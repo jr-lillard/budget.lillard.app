@@ -194,7 +194,7 @@ try {
         <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
           <button type="button" class="btn btn-sm btn-success" id="addRemBtn">+ Add Reminder</button>
           <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#userMenu" aria-controls="userMenu" aria-label="Account menu">
-            <i class="bi bi-list"></i>
+            <i class="bi bi-list fs-4"></i>
           </button>
         </div>
       </div>
