@@ -230,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         <div class="container-fluid position-relative">
             <a class="navbar-brand mx-auto" href="#"><?= htmlspecialchars($pageTitle) ?></a>
             <div class="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2">
-              <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#userMenu" aria-controls="userMenu" aria-label="Account menu">
+              <button class="btn btn-sm border-0 text-secondary" type="button" data-bs-toggle="offcanvas" data-bs-target="#userMenu" aria-controls="userMenu" aria-label="Account menu">
                 <i class="bi bi-list fs-4"></i>
               </button>
             </div>
