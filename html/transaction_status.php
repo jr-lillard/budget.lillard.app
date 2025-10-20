@@ -40,16 +40,39 @@ try {
     if ($status < 0 || $status > 2) { throw new RuntimeException('Invalid status value'); }
 
     $posted = ($status === 2) ? 1 : 0;
-    // If marking as pending or posted, also set the date to today
-    $setDateToday = ($status === 1 || $status === 2);
-    if ($setDateToday) {
+    if ($status === 2) {
+        // Marking as posted: set the date to the newest posted date
+        // for the same account (fallback: keep existing date, then today).
+        $txStmt = $pdo->prepare('SELECT account_id, `date` FROM transactions WHERE id = :id AND owner = :owner');
+        $txStmt->execute([':id' => $id, ':owner' => $owner]);
+        $txRow = $txStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$txRow) { throw new RuntimeException('Transaction not found'); }
+        $accountId = (int)($txRow['account_id'] ?? 0);
+        $existingDate = (string)($txRow['date'] ?? '');
+
+        $maxDate = null;
+        if ($accountId > 0) {
+            $md = $pdo->prepare('SELECT MAX(`date`) FROM transactions WHERE posted = 1 AND account_id = :acct AND owner = :owner');
+            $md->execute([':acct' => $accountId, ':owner' => $owner]);
+            $maxDate = $md->fetchColumn();
+        } else {
+            $md = $pdo->prepare('SELECT MAX(`date`) FROM transactions WHERE posted = 1 AND owner = :owner');
+            $md->execute([':owner' => $owner]);
+            $maxDate = $md->fetchColumn();
+        }
+        $newDate = $maxDate ?: ($existingDate !== '' ? $existingDate : date('Y-m-d'));
+
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, updated_at_source = NOW()\n+                               WHERE id = :id AND owner = :owner');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':id' => $id, ':owner' => $owner]);
+    } elseif ($status === 1) {
+        // Marking as pending: keep existing behavior (set to today)
         $today = date('Y-m-d');
         $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today, updated_at_source = NOW()
                                WHERE id = :id AND owner = :owner');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':today' => $today, ':id' => $id, ':owner' => $owner]);
     } else {
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, updated_at_source = NOW()
-                               WHERE id = :id AND owner = :owner');
+        // Scheduled: do not touch date
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, updated_at_source = NOW()\n+                               WHERE id = :id AND owner = :owner');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id, ':owner' => $owner]);
     }
     if ($stmt->rowCount() < 1) {
