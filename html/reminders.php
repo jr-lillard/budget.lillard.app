@@ -24,6 +24,7 @@ try {
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    budget_ensure_transaction_date_columns($pdo);
     $owner = budget_canonical_user((string)$_SESSION['username']);
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }

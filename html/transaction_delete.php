@@ -22,6 +22,7 @@ try {
     $pdo = get_mysql_connection();
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
+    budget_ensure_transaction_date_columns($pdo);
     $owner = budget_canonical_user((string)$_SESSION['username']);
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {

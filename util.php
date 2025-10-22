@@ -63,6 +63,19 @@ function budget_ensure_owner_column(PDO $pdo, string $table, string $column = 'o
     }
 }
 
+function budget_ensure_transaction_date_columns(PDO $pdo): void
+{
+    try { $pdo->exec('ALTER TABLE transactions ADD COLUMN initiated_date DATE NULL'); } catch (Throwable $e) { /* ignore */ }
+    try { $pdo->exec('ALTER TABLE transactions ADD COLUMN mailed_date DATE NULL'); } catch (Throwable $e) { /* ignore */ }
+    try { $pdo->exec('ALTER TABLE transactions ADD COLUMN settled_date DATE NULL'); } catch (Throwable $e) { /* ignore */ }
+    try {
+        $pdo->exec("UPDATE transactions SET initiated_date = COALESCE(initiated_date, `date`) WHERE initiated_date IS NULL AND `date` IS NOT NULL");
+    } catch (Throwable $e) { /* best effort */ }
+    try {
+        $pdo->exec("UPDATE transactions SET settled_date = `date` WHERE posted = 1 AND settled_date IS NULL AND `date` IS NOT NULL");
+    } catch (Throwable $e) { /* best effort */ }
+}
+
 /**
  * Persistent login ("remember me") helpers.
  * Implements a selector/validator token stored server-side and in a secure cookie.
