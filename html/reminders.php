@@ -16,6 +16,7 @@ $rows = [];
 
 try {
     $pdo = get_mysql_connection();
+    budget_ensure_transaction_date_columns($pdo);
     // Ensure structured frequency columns exist
     try { $pdo->exec('ALTER TABLE reminders ADD COLUMN frequency_every INT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
     try { $pdo->exec("ALTER TABLE reminders ADD COLUMN frequency_unit VARCHAR(32) NULL"); } catch (Throwable $e) { /* ignore if exists */ }

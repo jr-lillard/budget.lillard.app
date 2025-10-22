@@ -22,6 +22,7 @@ try {
     $pdo = get_mysql_connection();
     // Ensure status column exists
     try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore */ }
+    budget_ensure_transaction_date_columns($pdo);
 
     $id = (int)($_POST['id'] ?? 0);
     $rawStatus = $_POST['status'] ?? null;
@@ -58,16 +59,16 @@ try {
         }
         $newDate = $maxDate ?: ($existingDate !== '' ? $existingDate : date('Y-m-d'));
 
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate WHERE id = :id');
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, settled_date = :newDate WHERE id = :id');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':id' => $id]);
     } elseif ($status === 1) {
         // Marking as pending: keep existing behavior (set to today)
         $today = date('Y-m-d');
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today WHERE id = :id');
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today, settled_date = NULL WHERE id = :id');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':today' => $today, ':id' => $id]);
     } else {
         // Scheduled: do not touch date
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted WHERE id = :id');
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, settled_date = NULL WHERE id = :id');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id]);
     }
     if ($stmt->rowCount() < 1) {

@@ -100,6 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $pdo = get_mysql_connection();
             // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
             try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
+            budget_ensure_transaction_date_columns($pdo);
             $limit = 50; // recent rows to show
             // Remember account filter for the session
             $filterAccountId = 0;
@@ -112,8 +113,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $filterAccountId = (int)$_SESSION['tx_filter_account_id'];
             }
 
-            $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source, 
-                           t.account_id, a.name AS account_name
+            $sql = 'SELECT t.id, t.fm_pk, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
+                           t.account_id, t.initiated_date, t.mailed_date, t.settled_date, a.name AS account_name
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id';
             $params = [];
@@ -279,6 +280,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account="<?= htmlspecialchars((string)$acct) ?>"
                           data-description="<?= htmlspecialchars((string)$desc) ?>"
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                          data-initiated="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>"
+                          data-mailed="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>"
+                          data-settled="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>"
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -338,6 +342,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account="<?= htmlspecialchars((string)$acct) ?>"
                           data-description="<?= htmlspecialchars((string)$desc) ?>"
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                          data-initiated="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>"
+                          data-mailed="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>"
+                          data-settled="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>"
                           data-status="1"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -402,6 +409,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-account="<?= htmlspecialchars((string)$acct) ?>"
                         data-description="<?= htmlspecialchars((string)$desc) ?>"
                         data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                        data-initiated="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>"
+                        data-mailed="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>"
+                        data-settled="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>"
                         data-status="2"
                         data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -502,6 +512,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   </select>
                 </div>
               </div>
+              <div class="row g-2 mb-2">
+                <div class="col-4">
+                  <label class="form-label">Initiated</label>
+                  <input type="date" class="form-control" name="initiated_date" id="txInitiated">
+                </div>
+                <div class="col-4">
+                  <label class="form-label">Mailed</label>
+                  <input type="date" class="form-control" name="mailed_date" id="txMailed">
+                </div>
+                <div class="col-4">
+                  <label class="form-label">Settled</label>
+                  <input type="date" class="form-control" name="settled_date" id="txSettled">
+                </div>
+              </div>
               </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -571,7 +595,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription', row.dataset.description || '');
           setv('txCheck', row.dataset.check || '');
-          const statusEl = g('txStatus'); if (statusEl) statusEl.value = (row.dataset.status ?? '1');
+          const initDate = row.dataset.initiated || row.dataset.date || '';
+          setv('txInitiated', initDate);
+          setv('txMailed', row.dataset.mailed || '');
+          setv('txSettled', row.dataset.settled || '');
+          const statusVal = row.dataset.status ?? '1';
+          const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
+          if ((!row.dataset.settled || row.dataset.settled === '') && statusVal === '2') {
+            setv('txSettled', row.dataset.date || initDate);
+          }
           modal && modal.show();
         }
         // Clickable cells open edit
@@ -617,6 +649,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription','');
           setv('txCheck','');
+          const todaysDate = g('txDate') ? g('txDate').value : '';
+          setv('txInitiated', todaysDate);
+          setv('txMailed','');
+          setv('txSettled','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
           modal && modal.show();
         });
@@ -626,6 +662,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const newInput = g('txAccountNew');
           if (!newInput) return;
           if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
+        });
+
+        const statusControl = g('txStatus');
+        statusControl && statusControl.addEventListener('change', () => {
+          const settled = g('txSettled');
+          const dateInput = g('txDate');
+          if (!settled) return;
+          if (statusControl.value === '2') {
+            if (!settled.value && dateInput) settled.value = dateInput.value || '';
+          } else {
+            settled.value = '';
+          }
+        });
+
+        const dateInput = g('txDate');
+        dateInput && dateInput.addEventListener('change', () => {
+          const initInput = g('txInitiated');
+          const idInput = g('txId');
+          if (initInput && dateInput.value && (!idInput || !idInput.value) && !initInput.value) {
+            initInput.value = dateInput.value;
+          }
+          if (statusControl && statusControl.value === '2') {
+            const settled = g('txSettled');
+            if (settled) settled.value = dateInput.value || '';
+          }
         });
 
         // Header add buttons (Scheduled/Pending/Posted-date)
@@ -663,6 +724,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txDescription','');
           setv('txCheck','');
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
+          const dateVal = g('txDate') ? g('txDate').value : '';
+          setv('txInitiated', dateVal);
+          setv('txMailed','');
+          if (status === '2' && dateVal) { setv('txSettled', dateVal); } else { setv('txSettled',''); }
           modal && modal.show();
         });
 

@@ -26,6 +26,7 @@ try {
     } catch (Throwable $e) {
         // ignore if exists
     }
+    budget_ensure_transaction_date_columns($pdo);
     $id = (int)($_POST['id'] ?? 0);
     // New vs update
     $isInsert = ($id <= 0);
@@ -34,6 +35,9 @@ try {
     $amount = trim((string)($_POST['amount'] ?? ''));
     $description = trim((string)($_POST['description'] ?? ''));
     $checkNo = trim((string)($_POST['check_no'] ?? ''));
+    $initiatedDate = trim((string)($_POST['initiated_date'] ?? ''));
+    $mailedDate = trim((string)($_POST['mailed_date'] ?? ''));
+    $settledDate = trim((string)($_POST['settled_date'] ?? ''));
     // Accept either explicit 3-state status or fallback to posted checkbox
     $rawStatus = $_POST['status'] ?? null;
     $postedInt = isset($_POST['posted']) ? 1 : 0;
@@ -48,6 +52,11 @@ try {
     }
     if ($amount !== '' && !preg_match('/^-?\d+(?:\.\d{1,2})?$/', $amount)) {
         throw new RuntimeException('Amount format invalid');
+    }
+    foreach ([['Initiated date', $initiatedDate], ['Mailed date', $mailedDate], ['Settled date', $settledDate]] as [$label, $val]) {
+        if ($val !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
+            throw new RuntimeException($label . ' must be YYYY-MM-DD');
+        }
     }
 
     // Resolve account id
@@ -87,13 +96,27 @@ try {
     // Keep legacy posted column in sync with 3-state status
     $postedInt = ($statusVal === 2) ? 1 : 0;
 
+    if ($initiatedDate === '' && $date !== '') {
+        $initiatedDate = $date;
+    }
+    $mailedParam = $mailedDate !== '' ? $mailedDate : null;
+    if ($statusVal === 2) {
+        if ($settledDate === '' && $date !== '') {
+            $settledDate = $date;
+        }
+    } else {
+        $settledDate = '';
+    }
+    $initiatedParam = $initiatedDate !== '' ? $initiatedDate : null;
+    $settledParam = $settledDate !== '' ? $settledDate : null;
+
     if ($isInsert) {
         // Generate a GUID-like fm_pk
         $bytes = random_bytes(16);
         $hex = strtoupper(bin2hex($bytes));
         $fm_pk = substr($hex,0,8) . '-' . substr($hex,8,4) . '-' . substr($hex,12,4) . '-' . substr($hex,16,4) . '-' . substr($hex,20);
-        $sql = 'INSERT INTO transactions (fm_pk, account_id, `date`, amount, description, check_no, posted, status, created_at_source, updated_at_source)
-                VALUES (:fm_pk, :account_id, :date, :amount, :description, :check_no, :posted, :status, NOW(), NOW())';
+        $sql = 'INSERT INTO transactions (fm_pk, account_id, `date`, amount, description, check_no, initiated_date, mailed_date, settled_date, posted, status, created_at_source, updated_at_source)
+                VALUES (:fm_pk, :account_id, :date, :amount, :description, :check_no, :initiated_date, :mailed_date, :settled_date, :posted, :status, NOW(), NOW())';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':fm_pk' => $fm_pk,
@@ -102,13 +125,16 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':description' => $description !== '' ? $description : null,
             ':check_no' => $checkNo !== '' ? $checkNo : null,
+            ':initiated_date' => $initiatedParam,
+            ':mailed_date' => $mailedParam,
+            ':settled_date' => $settledParam,
             ':posted' => $postedInt,
             ':status' => $statusVal,
         ]);
         $newId = (int)$pdo->lastInsertId();
         echo json_encode(['ok' => true, 'id' => $newId]);
     } else {
-        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status WHERE id = :id';
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, initiated_date = :initiated_date, mailed_date = :mailed_date, settled_date = :settled_date, posted = :posted, status = :status WHERE id = :id';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':account_id' => $accountId ?: null,
@@ -116,6 +142,9 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':description' => $description !== '' ? $description : null,
             ':check_no' => $checkNo !== '' ? $checkNo : null,
+            ':initiated_date' => $initiatedParam,
+            ':mailed_date' => $mailedParam,
+            ':settled_date' => $settledParam,
             ':posted' => $postedInt,
             ':status' => $statusVal,
             ':id' => $id,

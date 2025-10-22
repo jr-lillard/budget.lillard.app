@@ -21,6 +21,9 @@ $row = [
     'description' => '',
     'check_no' => '',
     'posted' => '',
+    'initiated_date' => '',
+    'mailed_date' => '',
+    'settled_date' => '',
     'category' => '',
     'tags' => '',
     'account_name' => ''
@@ -28,6 +31,7 @@ $row = [
 
 try {
     $pdo = get_mysql_connection();
+    budget_ensure_transaction_date_columns($pdo);
     // Save
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int)($_POST['id'] ?? 0);
@@ -36,6 +40,9 @@ try {
         $description = trim((string)($_POST['description'] ?? ''));
         $checkNo = trim((string)($_POST['check_no'] ?? ''));
         $posted = trim((string)($_POST['posted'] ?? ''));
+        $initiatedDate = trim((string)($_POST['initiated_date'] ?? ''));
+        $mailedDate = trim((string)($_POST['mailed_date'] ?? ''));
+        $settledDate = trim((string)($_POST['settled_date'] ?? ''));
         $category = trim((string)($_POST['category'] ?? ''));
         $tags = trim((string)($_POST['tags'] ?? ''));
         $accountName = trim((string)($_POST['account_name'] ?? ''));
@@ -48,6 +55,11 @@ try {
         if ($amount !== '' && !preg_match('/^-?\d+(?:\.\d{1,2})?$/', $amount)) {
             throw new RuntimeException('Amount format invalid');
         }
+        foreach ([['Initiated date', $initiatedDate], ['Mailed date', $mailedDate], ['Settled date', $settledDate]] as [$label, $val]) {
+            if ($val !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
+                throw new RuntimeException($label . ' must be YYYY-MM-DD');
+            }
+        }
 
         // Resolve account by name (insert if missing)
         $accountId = null;
@@ -59,7 +71,20 @@ try {
             $accountId = (int)$get->fetchColumn();
         }
 
-        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, category = :category, tags = :tags WHERE id = :id';
+        if ($initiatedDate === '' && $date !== '') {
+            $initiatedDate = $date;
+        }
+        $mailedParam = $mailedDate !== '' ? $mailedDate : null;
+        $isPostedFlag = $posted !== '';
+        if ($isPostedFlag) {
+            if ($settledDate === '' && $date !== '') { $settledDate = $date; }
+        } else {
+            $settledDate = '';
+        }
+        $initiatedParam = $initiatedDate !== '' ? $initiatedDate : null;
+        $settledParam = $settledDate !== '' ? $settledDate : null;
+
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, initiated_date = :initiated, mailed_date = :mailed, settled_date = :settled, posted = :posted, category = :category, tags = :tags WHERE id = :id';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':account_id' => $accountId ?: null,
@@ -67,6 +92,9 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':description' => $description !== '' ? $description : null,
             ':check_no' => $checkNo !== '' ? $checkNo : null,
+            ':initiated' => $initiatedParam,
+            ':mailed' => $mailedParam,
+            ':settled' => $settledParam,
             ':posted' => $posted !== '' ? $posted : null,
             ':category' => $category !== '' ? $category : null,
             ':tags' => $tags !== '' ? $tags : null,
@@ -157,6 +185,20 @@ try {
           <div class="col-md-4">
             <label class="form-label">Category</label>
             <input type="text" class="form-control" name="category" value="<?= htmlspecialchars((string)($row['category'] ?? '')) ?>">
+          </div>
+        </div>
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label">Initiated</label>
+            <input type="date" class="form-control" name="initiated_date" value="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Mailed</label>
+            <input type="date" class="form-control" name="mailed_date" value="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Settled</label>
+            <input type="date" class="form-control" name="settled_date" value="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>">
           </div>
         </div>
 

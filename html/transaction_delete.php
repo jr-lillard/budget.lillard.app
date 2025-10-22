@@ -20,6 +20,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 
 try {
     $pdo = get_mysql_connection();
+    budget_ensure_transaction_date_columns($pdo);
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {
         throw new RuntimeException('Invalid id');
