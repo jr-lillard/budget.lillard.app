@@ -40,6 +40,7 @@ try {
     $amount = trim((string)($_POST['amount'] ?? ''));
     $description = trim((string)($_POST['description'] ?? ''));
     $checkNo = trim((string)($_POST['check_no'] ?? ''));
+    $hasCheck = ($checkNo !== '');
     $initiatedDate = trim((string)($_POST['initiated_date'] ?? ''));
     $mailedDate = trim((string)($_POST['mailed_date'] ?? ''));
     $settledDate = trim((string)($_POST['settled_date'] ?? ''));
@@ -101,22 +102,26 @@ try {
     // Keep legacy posted column in sync with 3-state status
     $postedInt = ($statusVal === 2) ? 1 : 0;
 
-    if ($initiatedDate === '' && $date !== '') {
-        $initiatedDate = $date;
-    }
-    if ($mailedDate === '') { $mailedDate = null; }
-
-    if ($statusVal === 2) {
-        if ($settledDate === '' && $date !== '') {
-            $settledDate = $date;
-        }
+    if (!$hasCheck) {
+        $initiatedDate = '';
+        $mailedDate = '';
+        $settledDate = '';
     } else {
-        $settledDate = null;
+        if ($initiatedDate === '' && $date !== '') {
+            $initiatedDate = $date;
+        }
+        if ($statusVal === 2) {
+            if ($settledDate === '' && $date !== '') {
+                $settledDate = $date;
+            }
+        } else {
+            $settledDate = '';
+        }
     }
 
-    $initiatedParam = $initiatedDate !== '' ? $initiatedDate : null;
-    $mailedParam = $mailedDate !== null ? $mailedDate : null;
-    $settledParam = ($settledDate !== null && $settledDate !== '') ? $settledDate : null;
+    $initiatedParam = ($hasCheck && $initiatedDate !== '') ? $initiatedDate : null;
+    $mailedParam = ($hasCheck && $mailedDate !== '') ? $mailedDate : null;
+    $settledParam = ($hasCheck && $settledDate !== '') ? $settledDate : null;
 
     if ($isInsert) {
         $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, initiated_date, mailed_date, settled_date, posted, status, owner, created_at_source, updated_at_source)
