@@ -41,12 +41,13 @@ try {
     if ($status === 2) {
         // Marking as posted: set the date to the newest posted date
         // for the same account (fallback: keep existing date, then today).
-        $txStmt = $pdo->prepare('SELECT account_id, `date` FROM transactions WHERE id = ?');
+        $txStmt = $pdo->prepare('SELECT account_id, `date`, check_no FROM transactions WHERE id = ?');
         $txStmt->execute([$id]);
         $txRow = $txStmt->fetch(PDO::FETCH_ASSOC);
         if (!$txRow) { throw new RuntimeException('Transaction not found'); }
         $accountId = (int)($txRow['account_id'] ?? 0);
         $existingDate = (string)($txRow['date'] ?? '');
+        $hasCheck = trim((string)($txRow['check_no'] ?? '')) !== '';
 
         $maxDate = null;
         if ($accountId > 0) {
@@ -59,8 +60,9 @@ try {
         }
         $newDate = $maxDate ?: ($existingDate !== '' ? $existingDate : date('Y-m-d'));
 
+        $settledValue = $hasCheck ? $newDate : null;
         $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, settled_date = :settledDate WHERE id = :id');
-        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':settledDate' => $newDate, ':id' => $id]);
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':settledDate' => $settledValue, ':id' => $id]);
     } elseif ($status === 1) {
         // Marking as pending: keep existing behavior (set to today)
         $today = date('Y-m-d');

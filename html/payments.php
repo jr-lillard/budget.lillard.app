@@ -324,7 +324,7 @@ try {
           <div class="modal-body">
             <input type="hidden" name="id" id="txId">
             <input type="hidden" name="account_keep" id="txAccountKeep">
-            <div class="row g-2 mb-2">
+            <div class="row g-2 mb-2 d-none" id="txCheckDates">
               <div class="col-6">
                 <label class="form-label">Date</label>
                 <input type="date" class="form-control" name="date" id="txDate">
@@ -416,6 +416,29 @@ try {
       const form = document.getElementById('editTxForm');
       const g = (id) => document.getElementById(id);
       const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
+      const checkDatesWrap = g('txCheckDates');
+      const checkInput = g('txCheck');
+      const postedToggle = g('txPosted');
+      const dateInput = g('txDate');
+      const toggleCheckDates = () => {
+        if (!checkDatesWrap) return;
+        const hasCheck = !!(checkInput && checkInput.value.trim());
+        if (hasCheck) {
+          checkDatesWrap.classList.remove('d-none');
+          const initInput = g('txInitiated');
+          if (initInput && !initInput.value && dateInput && dateInput.value) initInput.value = dateInput.value;
+          if (postedToggle && postedToggle.checked) {
+            const settledInput = g('txSettled');
+            if (settledInput && !settledInput.value && dateInput && dateInput.value) settledInput.value = dateInput.value;
+          }
+        } else {
+          checkDatesWrap.classList.add('d-none');
+          setv('txInitiated','');
+          setv('txMailed','');
+          setv('txSettled','');
+        }
+      };
+      checkInput && checkInput.addEventListener('input', toggleCheckDates);
 
       // Edit existing transaction
       document.addEventListener('click', (e) => {
@@ -454,12 +477,13 @@ try {
         setv('txCheck', btn.dataset.check);
         const postedEl = g('txPosted');
         if (postedEl) postedEl.checked = (btn.dataset.posted === '1');
-        const initDate = btn.dataset.initiated || btn.dataset.date || '';
-        setv('txInitiated', initDate);
+        setv('txInitiated', btn.dataset.initiated || btn.dataset.date || '');
         setv('txMailed', btn.dataset.mailed || '');
         setv('txSettled', btn.dataset.settled || '');
+        toggleCheckDates();
         if (postedEl && postedEl.checked && (!btn.dataset.settled || btn.dataset.settled === '')) {
-          setv('txSettled', btn.dataset.date || initDate);
+          const fallback = btn.dataset.date || btn.dataset.initiated || '';
+          if (fallback) setv('txSettled', fallback);
         }
         modal && modal.show();
       });
@@ -482,10 +506,10 @@ try {
         setv('txDescription','Payment');
         setv('txCheck','');
         const postedEl2 = g('txPosted'); if (postedEl2) postedEl2.checked = false;
-        const dateVal = g('txDate') ? g('txDate').value : '';
-        setv('txInitiated', dateVal);
+        setv('txInitiated','');
         setv('txMailed','');
         setv('txSettled','');
+        toggleCheckDates();
         modal && modal.show();
       });
 
@@ -497,30 +521,32 @@ try {
         if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
       });
 
-      const postedToggle = g('txPosted');
       postedToggle && postedToggle.addEventListener('change', () => {
         const settled = g('txSettled');
         const dateInput = g('txDate');
         if (!settled) return;
         if (postedToggle.checked) {
-          settled.value = dateInput ? (dateInput.value || '') : settled.value;
+          if (checkInput && checkInput.value.trim()) {
+            settled.value = dateInput ? (dateInput.value || '') : settled.value;
+          }
         } else {
           settled.value = '';
         }
       });
 
-      const dateInput = g('txDate');
       dateInput && dateInput.addEventListener('change', () => {
         const initInput = g('txInitiated');
         const idInput = g('txId');
-        if (initInput && dateInput.value && (!idInput || !idInput.value) && !initInput.value) {
+        if (initInput && dateInput.value && checkInput && checkInput.value.trim() && (!idInput || !idInput.value) && !initInput.value) {
           initInput.value = dateInput.value;
         }
-        if (postedToggle && postedToggle.checked) {
+        if (postedToggle && postedToggle.checked && checkInput && checkInput.value.trim()) {
           const settled = g('txSettled');
           if (settled) settled.value = dateInput.value || '';
         }
       });
+
+      toggleCheckDates();
 
       // Save
       form && form.addEventListener('submit', async (ev) => {

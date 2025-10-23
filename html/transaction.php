@@ -118,6 +118,7 @@ try {
 } catch (Throwable $e) {
     $error = 'Error: ' . $e->getMessage();
 }
+$hasCheck = trim((string)($row['check_no'] ?? '')) !== '';
 ?>
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
@@ -147,7 +148,7 @@ try {
       <form method="post" action="transaction.php?id=<?= (int)$row['id'] ?>">
         <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
 
-        <div class="row g-3 mb-3">
+        <div class="row g-3 mb-3<?= $hasCheck ? '' : ' d-none' ?>" id="checkDateFields">
           <div class="col-md-6">
             <label class="form-label">Date</label>
             <input type="date" class="form-control" name="date" value="<?= htmlspecialchars((string)($row['date'] ?? '')) ?>">
@@ -215,5 +216,39 @@ try {
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script>
+    (() => {
+      const form = document.querySelector('form');
+      if (!form) return;
+      const checkInput = form.querySelector('[name="check_no"]');
+      const checkDatesRow = document.getElementById('checkDateFields');
+      const dateInput = form.querySelector('[name="date"]');
+      const initiatedInput = form.querySelector('[name="initiated_date"]');
+      const mailedInput = form.querySelector('[name="mailed_date"]');
+      const settledInput = form.querySelector('[name="settled_date"]');
+      const toggleCheckDates = () => {
+        if (!checkDatesRow) return;
+        const hasCheck = !!(checkInput && checkInput.value.trim());
+        if (hasCheck) {
+          checkDatesRow.classList.remove('d-none');
+          if (initiatedInput && !initiatedInput.value && dateInput && dateInput.value) {
+            initiatedInput.value = dateInput.value;
+          }
+        } else {
+          checkDatesRow.classList.add('d-none');
+          if (initiatedInput) initiatedInput.value = '';
+          if (mailedInput) mailedInput.value = '';
+          if (settledInput) settledInput.value = '';
+        }
+      };
+      checkInput && checkInput.addEventListener('input', toggleCheckDates);
+      dateInput && dateInput.addEventListener('change', () => {
+        if (checkInput && checkInput.value.trim() && initiatedInput && !initiatedInput.value) {
+          initiatedInput.value = dateInput.value || '';
+        }
+      });
+      toggleCheckDates();
+    })();
+    </script>
   </body>
   </html>

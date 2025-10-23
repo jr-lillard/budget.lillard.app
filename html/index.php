@@ -512,7 +512,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   </select>
                 </div>
               </div>
-              <div class="row g-2 mb-2">
+              <div class="row g-2 mb-2 d-none" id="txCheckDates">
                 <div class="col-4">
                   <label class="form-label">Initiated</label>
                   <input type="date" class="form-control" name="initiated_date" id="txInitiated">
@@ -563,6 +563,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const form = document.getElementById('editTxForm');
         const g = (id) => document.getElementById(id);
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
+        const checkDatesWrap = g('txCheckDates');
+        const checkInput = g('txCheck');
+        const statusControl = g('txStatus');
+        const dateInput = g('txDate');
+        const toggleCheckDates = () => {
+          if (!checkDatesWrap) return;
+          const hasCheck = !!(checkInput && checkInput.value.trim());
+          if (hasCheck) {
+            checkDatesWrap.classList.remove('d-none');
+            const initInput = g('txInitiated');
+            if (initInput && !initInput.value && dateInput && dateInput.value) initInput.value = dateInput.value;
+            if (statusControl && statusControl.value === '2') {
+              const settledInput = g('txSettled');
+              if (settledInput && !settledInput.value && dateInput && dateInput.value) settledInput.value = dateInput.value;
+            }
+          } else {
+            checkDatesWrap.classList.add('d-none');
+            setv('txInitiated','');
+            setv('txMailed','');
+            setv('txSettled','');
+          }
+        };
+        checkInput && checkInput.addEventListener('input', toggleCheckDates);
         function openEditFromRow(row){
           if (!row) return;
           setv('txId', row.dataset.id || '');
@@ -595,14 +618,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription', row.dataset.description || '');
           setv('txCheck', row.dataset.check || '');
-          const initDate = row.dataset.initiated || row.dataset.date || '';
-          setv('txInitiated', initDate);
+          setv('txInitiated', row.dataset.initiated || row.dataset.date || '');
           setv('txMailed', row.dataset.mailed || '');
           setv('txSettled', row.dataset.settled || '');
           const statusVal = row.dataset.status ?? '1';
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
+          toggleCheckDates();
           if ((!row.dataset.settled || row.dataset.settled === '') && statusVal === '2') {
-            setv('txSettled', row.dataset.date || initDate);
+            const fallback = row.dataset.date || row.dataset.initiated || '';
+            if (fallback) setv('txSettled', fallback);
           }
           modal && modal.show();
         }
@@ -649,11 +673,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription','');
           setv('txCheck','');
-          const todaysDate = g('txDate') ? g('txDate').value : '';
-          setv('txInitiated', todaysDate);
+          setv('txInitiated','');
           setv('txMailed','');
           setv('txSettled','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
+          toggleCheckDates();
           modal && modal.show();
         });
         // Toggle new account input visibility on select change
@@ -670,7 +694,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const dateInput = g('txDate');
           if (!settled) return;
           if (statusControl.value === '2') {
-            if (!settled.value && dateInput) settled.value = dateInput.value || '';
+            if (checkInput && checkInput.value.trim() && !settled.value && dateInput) settled.value = dateInput.value || '';
           } else {
             settled.value = '';
           }
@@ -680,10 +704,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         dateInput && dateInput.addEventListener('change', () => {
           const initInput = g('txInitiated');
           const idInput = g('txId');
-          if (initInput && dateInput.value && (!idInput || !idInput.value) && !initInput.value) {
+          if (initInput && dateInput.value && checkInput && checkInput.value.trim() && (!idInput || !idInput.value) && !initInput.value) {
             initInput.value = dateInput.value;
           }
-          if (statusControl && statusControl.value === '2') {
+          if (statusControl && statusControl.value === '2' && checkInput && checkInput.value.trim()) {
             const settled = g('txSettled');
             if (settled) settled.value = dateInput.value || '';
           }
@@ -724,12 +748,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txDescription','');
           setv('txCheck','');
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
-          const dateVal = g('txDate') ? g('txDate').value : '';
-          setv('txInitiated', dateVal);
+          setv('txInitiated','');
           setv('txMailed','');
-          if (status === '2' && dateVal) { setv('txSettled', dateVal); } else { setv('txSettled',''); }
+          setv('txSettled','');
+          toggleCheckDates();
           modal && modal.show();
         });
+
+        toggleCheckDates();
 
         form && form.addEventListener('submit', async (ev) => {
           ev.preventDefault();
