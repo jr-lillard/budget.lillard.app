@@ -59,8 +59,8 @@ try {
         }
         $newDate = $maxDate ?: ($existingDate !== '' ? $existingDate : date('Y-m-d'));
 
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, settled_date = :newDate WHERE id = :id');
-        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':id' => $id]);
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, settled_date = :settledDate WHERE id = :id');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':settledDate' => $newDate, ':id' => $id]);
     } elseif ($status === 1) {
         // Marking as pending: keep existing behavior (set to today)
         $today = date('Y-m-d');
