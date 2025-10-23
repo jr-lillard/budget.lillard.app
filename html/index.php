@@ -688,10 +688,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
         });
 
-        const statusControl = g('txStatus');
         statusControl && statusControl.addEventListener('change', () => {
           const settled = g('txSettled');
-          const dateInput = g('txDate');
           if (!settled) return;
           if (statusControl.value === '2') {
             if (checkInput && checkInput.value.trim() && !settled.value && dateInput) settled.value = dateInput.value || '';
@@ -700,7 +698,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
         });
 
-        const dateInput = g('txDate');
         dateInput && dateInput.addEventListener('change', () => {
           const initInput = g('txInitiated');
           const idInput = g('txId');
