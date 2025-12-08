@@ -330,7 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $schedSumStmt->execute($schedSumParams);
             $schedTotalAmount = (float)($schedSumStmt->fetchColumn() ?: 0);
 
-            // Account activity (last 3 months) grouped by account
+            // Account activity (all time) grouped by account
             $activitySql = "SELECT COALESCE(a.name, '(No account)') AS account_name,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0 THEN t.amount ELSE 0 END) AS scheduled_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
@@ -338,7 +338,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                             FROM transactions t
                             LEFT JOIN accounts a ON a.id = t.account_id
                             WHERE t.owner = ?
-                              AND t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
                             GROUP BY account_name
                             HAVING scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL
                             ORDER BY account_name ASC";
