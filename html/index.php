@@ -382,10 +382,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           <?php if (!empty($accountActivity)): ?>
             <div class="card mb-3 shadow-sm">
               <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                  <h2 class="h6 mb-0">Account Activity (last 3 months)</h2>
-                  <span class="text-body-secondary small">Scheduled / Pending / Posted</span>
-                </div>
                 <div class="table-responsive">
                   <table class="table table-sm align-middle mb-0">
                     <thead class="table-light">
