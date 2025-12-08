@@ -24,7 +24,6 @@ try {
     try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore */ }
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
-    budget_ensure_transaction_date_columns($pdo);
     $owner = budget_canonical_user((string)$_SESSION['username']);
 
     $id = (int)($_POST['id'] ?? 0);
@@ -50,7 +49,6 @@ try {
         if (!$txRow) { throw new RuntimeException('Transaction not found'); }
         $accountId = (int)($txRow['account_id'] ?? 0);
         $existingDate = (string)($txRow['date'] ?? '');
-        $hasCheck = trim((string)($txRow['check_no'] ?? '')) !== '';
 
         $maxDate = null;
         if ($accountId > 0) {
@@ -64,17 +62,16 @@ try {
         }
         $newDate = $maxDate ?: ($existingDate !== '' ? $existingDate : date('Y-m-d'));
 
-        $settledValue = $hasCheck ? $newDate : null;
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, settled_date = :settled, updated_at_source = NOW() WHERE id = :id AND owner = :owner');
-        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':settled' => $settledValue, ':id' => $id, ':owner' => $owner]);
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :newDate, updated_at_source = NOW() WHERE id = :id AND owner = :owner');
+        $stmt->execute([':status' => $status, ':posted' => $posted, ':newDate' => $newDate, ':id' => $id, ':owner' => $owner]);
     } elseif ($status === 1) {
-        // Marking as pending: keep existing behavior (set to today) and clear settled date
+        // Marking as pending: set to today
         $today = date('Y-m-d');
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today, settled_date = NULL, updated_at_source = NOW() WHERE id = :id AND owner = :owner');
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, `date` = :today, updated_at_source = NOW() WHERE id = :id AND owner = :owner');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':today' => $today, ':id' => $id, ':owner' => $owner]);
     } else {
-        // Scheduled: do not touch date, but ensure settled date cleared
-        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, settled_date = NULL, updated_at_source = NOW() WHERE id = :id AND owner = :owner');
+        // Scheduled: do not touch date
+        $stmt = $pdo->prepare('UPDATE transactions SET status = :status, posted = :posted, updated_at_source = NOW() WHERE id = :id AND owner = :owner');
         $stmt->execute([':status' => $status, ':posted' => $posted, ':id' => $id, ':owner' => $owner]);
     }
     if ($stmt->rowCount() < 1) {

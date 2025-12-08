@@ -41,6 +41,46 @@ function budget_default_owner(): string
     return 'jr@lillard.org';
 }
 
+/**
+ * Look up a user's phone number by username/email (canonical) with local-part fallback.
+ */
+function budget_lookup_phone(PDO $pdo, string $username): string
+{
+    $canon = budget_canonical_user($username);
+    $local = $canon;
+    if (str_contains($canon, '@')) {
+        [$local] = explode('@', $canon, 2);
+        $local = budget_canonical_user($local);
+    }
+    $stmt = $pdo->prepare('SELECT phone FROM users WHERE username IN (?, ?) ORDER BY (username = ?) DESC LIMIT 1');
+    $stmt->execute([$canon, $local, $canon]);
+    return (string)($stmt->fetchColumn() ?? '');
+}
+
+/**
+ * Normalize a phone number to E.164-ish for SMS.
+ */
+function budget_normalize_phone_for_sms(string $num): string
+{
+    $n = preg_replace('/[^0-9+]/', '', $num);
+    if ($n === '') {
+        return '';
+    }
+    if ($n[0] === '+') {
+        return preg_match('/^\\+[0-9]{6,15}$/', $n) ? $n : '';
+    }
+    if (preg_match('/^[0-9]{10}$/', $n)) { // assume US
+        return '+1' . $n;
+    }
+    if (preg_match('/^1[0-9]{10}$/', $n)) {
+        return '+' . $n;
+    }
+    if (preg_match('/^[0-9]{6,15}$/', $n)) {
+        return '+' . $n;
+    }
+    return '';
+}
+
 function budget_ensure_owner_column(PDO $pdo, string $table, string $column = 'owner', ?string $assignOwnerForNull = null): void
 {
     if (!preg_match('/^[A-Za-z0-9_]+$/', $table) || !preg_match('/^[A-Za-z0-9_]+$/', $column)) {
@@ -61,19 +101,6 @@ function budget_ensure_owner_column(PDO $pdo, string $table, string $column = 'o
             // best effort only
         }
     }
-}
-
-function budget_ensure_transaction_date_columns(PDO $pdo): void
-{
-    try { $pdo->exec('ALTER TABLE transactions ADD COLUMN initiated_date DATE NULL'); } catch (Throwable $e) { /* ignore */ }
-    try { $pdo->exec('ALTER TABLE transactions ADD COLUMN mailed_date DATE NULL'); } catch (Throwable $e) { /* ignore */ }
-    try { $pdo->exec('ALTER TABLE transactions ADD COLUMN settled_date DATE NULL'); } catch (Throwable $e) { /* ignore */ }
-    try {
-        $pdo->exec("UPDATE transactions SET initiated_date = COALESCE(initiated_date, `date`) WHERE initiated_date IS NULL AND `date` IS NOT NULL");
-    } catch (Throwable $e) { /* best effort */ }
-    try {
-        $pdo->exec("UPDATE transactions SET settled_date = `date` WHERE posted = 1 AND settled_date IS NULL AND `date` IS NOT NULL");
-    } catch (Throwable $e) { /* best effort */ }
 }
 
 /**
@@ -294,4 +321,73 @@ function send_mail_via_smtp2go(string|array $to, string $subject, string $html, 
     }
     $errMsg = $data['data']['failures'][0]['error'] ?? ($data['error'] ?? 'Unknown SMTP2GO error');
     return [false, (string)$errMsg];
+}
+
+/**
+ * Send an SMS using SMTP2GO's SMS API.
+ * Returns [bool ok, ?string error].
+ */
+function send_sms_via_smtp2go(string|array $to, string $content, ?string $sender = null): array
+{
+    $config = require __DIR__ . '/config.php';
+    $mail = $config['mail'] ?? [];
+    $apiKey = (string)($mail['sms_api_key'] ?? $mail['api_key'] ?? '');
+    $sender = $sender ?? (string)($mail['sms_sender'] ?? '');
+    if ($apiKey === '') {
+        return [false, 'SMTP2GO api_key not configured'];
+    }
+
+    $destinations = is_array($to) ? $to : [$to];
+    $destinations = array_values(array_filter(array_map(static function ($num) {
+        return budget_normalize_phone_for_sms((string)$num);
+    }, $destinations)));
+    if (empty($destinations)) {
+        return [false, 'No valid destination numbers'];
+    }
+
+    $payload = [
+        'api_key' => $apiKey,
+        'destination' => $destinations,
+        'content' => $content,
+    ];
+    if ($sender !== null && $sender !== '') {
+        $payload['sender'] = $sender;
+    }
+
+    $ch = curl_init('https://api.smtp2go.com/v3/sms/send');
+    if ($ch === false) {
+        return [false, 'curl_init failed'];
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    $resp = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($resp === false) {
+        return [false, 'curl_exec failed: ' . $err];
+    }
+    $data = json_decode($resp, true);
+    // Success heuristic: HTTP 2xx and either data/request_id present or no error key
+    if ($code >= 200 && $code < 300) {
+        if (is_array($data)) {
+            if (!empty($data['error'])) {
+                return [false, (string)$data['error']];
+            }
+            if (isset($data['data']) || isset($data['request_id']) || isset($data['results'])) {
+                return [true, null];
+            }
+        }
+        // If parse failed but HTTP was OK, treat as success but note uncertainty
+        if ($data === null) {
+            return [true, null];
+        }
+    }
+    return [false, 'HTTP ' . (string)$code . ' response: ' . substr($resp, 0, 200)];
 }

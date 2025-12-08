@@ -28,7 +28,6 @@ try {
     }
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
-    budget_ensure_transaction_date_columns($pdo);
     // Ensure legacy fm_pk is nullable so we can stop using it
     try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
     $id = (int)($_POST['id'] ?? 0);
@@ -40,10 +39,6 @@ try {
     $amount = trim((string)($_POST['amount'] ?? ''));
     $description = trim((string)($_POST['description'] ?? ''));
     $checkNo = trim((string)($_POST['check_no'] ?? ''));
-    $hasCheck = ($checkNo !== '');
-    $initiatedDate = trim((string)($_POST['initiated_date'] ?? ''));
-    $mailedDate = trim((string)($_POST['mailed_date'] ?? ''));
-    $settledDate = trim((string)($_POST['settled_date'] ?? ''));
     // Accept either explicit 3-state status or fallback to posted checkbox
     $rawStatus = $_POST['status'] ?? null;
     $postedInt = isset($_POST['posted']) ? 1 : 0;
@@ -55,11 +50,6 @@ try {
 
     if ($date !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         throw new RuntimeException('Date must be YYYY-MM-DD');
-    }
-    foreach ([['label' => 'Initiated date', 'value' => $initiatedDate], ['label' => 'Mailed date', 'value' => $mailedDate], ['label' => 'Settled date', 'value' => $settledDate]] as $meta) {
-        if ($meta['value'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $meta['value'])) {
-            throw new RuntimeException($meta['label'] . ' must be YYYY-MM-DD');
-        }
     }
     if ($amount !== '' && !preg_match('/^-?\d+(?:\.\d{1,2})?$/', $amount)) {
         throw new RuntimeException('Amount format invalid');
@@ -102,30 +92,9 @@ try {
     // Keep legacy posted column in sync with 3-state status
     $postedInt = ($statusVal === 2) ? 1 : 0;
 
-    if (!$hasCheck) {
-        $initiatedDate = '';
-        $mailedDate = '';
-        $settledDate = '';
-    } else {
-        if ($initiatedDate === '' && $date !== '') {
-            $initiatedDate = $date;
-        }
-        if ($statusVal === 2) {
-            if ($settledDate === '' && $date !== '') {
-                $settledDate = $date;
-            }
-        } else {
-            $settledDate = '';
-        }
-    }
-
-    $initiatedParam = ($hasCheck && $initiatedDate !== '') ? $initiatedDate : null;
-    $mailedParam = ($hasCheck && $mailedDate !== '') ? $mailedDate : null;
-    $settledParam = ($hasCheck && $settledDate !== '') ? $settledDate : null;
-
     if ($isInsert) {
-        $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, initiated_date, mailed_date, settled_date, posted, status, owner, created_at_source, updated_at_source)
-                VALUES (:account_id, :date, :amount, :description, :check_no, :initiated_date, :mailed_date, :settled_date, :posted, :status, :owner, NOW(), NOW())';
+        $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
+                VALUES (:account_id, :date, :amount, :description, :check_no, :posted, :status, :owner, NOW(), NOW())';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
             ':account_id' => $accountId ?: null,
@@ -133,9 +102,6 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':description' => $description !== '' ? $description : null,
             ':check_no' => $checkNo !== '' ? $checkNo : null,
-            ':initiated_date' => $initiatedParam,
-            ':mailed_date' => $mailedParam,
-            ':settled_date' => $settledParam,
             ':posted' => $postedInt,
             ':status' => $statusVal,
             ':owner' => $owner,
@@ -143,7 +109,7 @@ try {
         $newId = (int)$pdo->lastInsertId();
         echo json_encode(['ok' => true, 'id' => $newId]);
     } else {
-        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, initiated_date = :initiated_date, mailed_date = :mailed_date, settled_date = :settled_date, posted = :posted, status = :status, updated_at_source = NOW()
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status, updated_at_source = NOW()
                 WHERE id = :id AND owner = :owner';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
@@ -152,9 +118,6 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':description' => $description !== '' ? $description : null,
             ':check_no' => $checkNo !== '' ? $checkNo : null,
-            ':initiated_date' => $initiatedParam,
-            ':mailed_date' => $mailedParam,
-            ':settled_date' => $settledParam,
             ':posted' => $postedInt,
             ':status' => $statusVal,
             ':id' => $id,

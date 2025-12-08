@@ -26,9 +26,6 @@ $row = [
     'description' => '',
     'check_no' => '',
     'posted' => '',
-    'initiated_date' => '',
-    'mailed_date' => '',
-    'settled_date' => '',
     'category' => '',
     'tags' => '',
     'account_name' => ''
@@ -38,7 +35,6 @@ try {
     $pdo = get_mysql_connection();
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
-    budget_ensure_transaction_date_columns($pdo);
     $owner = budget_canonical_user((string)$_SESSION['username']);
     // Save
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -48,9 +44,6 @@ try {
         $description = trim((string)($_POST['description'] ?? ''));
         $checkNo = trim((string)($_POST['check_no'] ?? ''));
         $posted = trim((string)($_POST['posted'] ?? ''));
-        $initiatedDate = trim((string)($_POST['initiated_date'] ?? ''));
-        $mailedDate = trim((string)($_POST['mailed_date'] ?? ''));
-        $settledDate = trim((string)($_POST['settled_date'] ?? ''));
         $category = trim((string)($_POST['category'] ?? ''));
         $tags = trim((string)($_POST['tags'] ?? ''));
         $accountName = trim((string)($_POST['account_name'] ?? ''));
@@ -63,11 +56,6 @@ try {
         if ($amount !== '' && !preg_match('/^-?\d+(?:\.\d{1,2})?$/', $amount)) {
             throw new RuntimeException('Amount format invalid');
         }
-        foreach ([['Initiated date', $initiatedDate], ['Mailed date', $mailedDate], ['Settled date', $settledDate]] as [$label, $val]) {
-            if ($val !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
-                throw new RuntimeException($label . ' must be YYYY-MM-DD');
-            }
-        }
 
         // Resolve account by name (insert if missing)
         $accountId = null;
@@ -79,20 +67,7 @@ try {
             $accountId = (int)$get->fetchColumn();
         }
 
-        if ($initiatedDate === '' && $date !== '') {
-            $initiatedDate = $date;
-        }
-        $mailedParam = $mailedDate !== '' ? $mailedDate : null;
-        $isPostedFlag = $posted !== '';
-        if ($isPostedFlag) {
-            if ($settledDate === '' && $date !== '') { $settledDate = $date; }
-        } else {
-            $settledDate = '';
-        }
-        $initiatedParam = $initiatedDate !== '' ? $initiatedDate : null;
-        $settledParam = $settledDate !== '' ? $settledDate : null;
-
-        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, initiated_date = :initiated, mailed_date = :mailed, settled_date = :settled, posted = :posted, category = :category, tags = :tags, updated_at_source = NOW()
+        $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, category = :category, tags = :tags, updated_at_source = NOW()
                 WHERE id = :id AND owner = :owner';
         $stmt = $pdo->prepare($sql);
         $stmt->execute([
@@ -101,9 +76,6 @@ try {
             ':amount' => $amount !== '' ? $amount : null,
             ':description' => $description !== '' ? $description : null,
             ':check_no' => $checkNo !== '' ? $checkNo : null,
-            ':initiated' => $initiatedParam,
-            ':mailed' => $mailedParam,
-            ':settled' => $settledParam,
             ':posted' => $posted !== '' ? $posted : null,
             ':category' => $category !== '' ? $category : null,
             ':tags' => $tags !== '' ? $tags : null,
@@ -128,7 +100,6 @@ try {
 } catch (Throwable $e) {
     $error = 'Error: ' . $e->getMessage();
 }
-$hasCheck = trim((string)($row['check_no'] ?? '')) !== '';
 ?>
 <!doctype html>
 <html lang="en">
@@ -158,6 +129,7 @@ $hasCheck = trim((string)($row['check_no'] ?? '')) !== '';
       </div>
       <div class="offcanvas-body">
         <p class="text-body-secondary small mb-3">Signed in as<br><strong><?= htmlspecialchars($currentUser) ?></strong></p>
+        <a class="btn btn-outline-primary w-100 mb-2" href="profile.php">Profile</a>
         <a class="btn btn-outline-secondary w-100" href="index.php?logout=1">Logout</a>
       </div>
     </div>
@@ -173,7 +145,7 @@ $hasCheck = trim((string)($row['check_no'] ?? '')) !== '';
       <form method="post" action="transaction.php?id=<?= (int)$row['id'] ?>">
         <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
 
-        <div class="row g-3 mb-3<?= $hasCheck ? '' : ' d-none' ?>" id="checkDateFields">
+        <div class="row g-3 mb-3">
           <div class="col-md-6">
             <label class="form-label">Date</label>
             <input type="date" class="form-control" name="date" value="<?= htmlspecialchars((string)($row['date'] ?? '')) ?>">
@@ -213,20 +185,6 @@ $hasCheck = trim((string)($row['check_no'] ?? '')) !== '';
             <input type="text" class="form-control" name="category" value="<?= htmlspecialchars((string)($row['category'] ?? '')) ?>">
           </div>
         </div>
-        <div class="row g-3 mb-3">
-          <div class="col-md-4">
-            <label class="form-label">Initiated</label>
-            <input type="date" class="form-control" name="initiated_date" value="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">Mailed</label>
-            <input type="date" class="form-control" name="mailed_date" value="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">Settled</label>
-            <input type="date" class="form-control" name="settled_date" value="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>">
-          </div>
-        </div>
 
         <div class="mb-3">
           <label class="form-label">Tags</label>
@@ -242,38 +200,7 @@ $hasCheck = trim((string)($row['check_no'] ?? '')) !== '';
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
     <script>
-    (() => {
-      const form = document.querySelector('form');
-      if (!form) return;
-      const checkInput = form.querySelector('[name="check_no"]');
-      const checkDatesRow = document.getElementById('checkDateFields');
-      const dateInput = form.querySelector('[name="date"]');
-      const initiatedInput = form.querySelector('[name="initiated_date"]');
-      const mailedInput = form.querySelector('[name="mailed_date"]');
-      const settledInput = form.querySelector('[name="settled_date"]');
-      const toggleCheckDates = () => {
-        if (!checkDatesRow) return;
-        const hasCheck = !!(checkInput && checkInput.value.trim());
-        if (hasCheck) {
-          checkDatesRow.classList.remove('d-none');
-          if (initiatedInput && !initiatedInput.value && dateInput && dateInput.value) {
-            initiatedInput.value = dateInput.value;
-          }
-        } else {
-          checkDatesRow.classList.add('d-none');
-          if (initiatedInput) initiatedInput.value = '';
-          if (mailedInput) mailedInput.value = '';
-          if (settledInput) settledInput.value = '';
-        }
-      };
-      checkInput && checkInput.addEventListener('input', toggleCheckDates);
-      dateInput && dateInput.addEventListener('change', () => {
-        if (checkInput && checkInput.value.trim() && initiatedInput && !initiatedInput.value) {
-          initiatedInput.value = dateInput.value || '';
-        }
-      });
-      toggleCheckDates();
-    })();
+    (() => {})();
     </script>
   </body>
   </html>

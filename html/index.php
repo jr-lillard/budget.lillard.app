@@ -28,6 +28,7 @@ $loggedIn = $sessionUser !== '';
 $currentUser = $sessionUser;
 $recentTx = [];
 $recentError = '';
+$accountActivity = [];
 
 /**
  * Send a one-time login code to the given email address.
@@ -42,6 +43,22 @@ function budget_send_login_code(string $email, string $code): array
 <p>Enter this code in the Budget app within 10 minutes.</p>
 HTML;
     $text = "Your Budget login code is {$code}.\nEnter this code in the Budget app within 10 minutes.\n";
+
+    try {
+        $pdo = get_mysql_connection();
+        $phone = budget_lookup_phone($pdo, $email);
+    } catch (Throwable $e) {
+        $phone = '';
+    }
+
+    if ($phone !== '') {
+        [$smsOk, $smsErr] = send_sms_via_smtp2go($phone, "Budget login code: {$code}. Use within 10 minutes.");
+        if ($smsOk) {
+            return [true, 'Sent via SMS'];
+        }
+        error_log('SMS code send failed for ' . $email . ': ' . (string)$smsErr);
+    }
+
     return send_mail_via_smtp2go($email, $subject, $html, $text, null);
 }
 
@@ -243,6 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         </div>
         <div class="offcanvas-body">
           <p class="text-body-secondary small mb-3">Signed in as<br><strong><?= htmlspecialchars($currentUser) ?></strong></p>
+          <a class="btn btn-outline-primary w-100 mb-2" href="profile.php">Profile</a>
           <a class="btn btn-outline-secondary w-100" href="index.php?logout=1">Logout</a>
         </div>
       </div>
@@ -259,7 +277,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $defaultOwner = budget_default_owner();
             budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
             budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
-            budget_ensure_transaction_date_columns($pdo);
             $owner = $currentUser;
             // Remember account filter for the session
             $filterAccountId = 0;
@@ -273,7 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             }
 
             $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
-                       t.account_id, t.initiated_date, t.mailed_date, t.settled_date, a.name AS account_name
+                       t.account_id, a.name AS account_name
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id
                     WHERE t.owner = ?';
@@ -313,6 +330,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $schedSumStmt->execute($schedSumParams);
             $schedTotalAmount = (float)($schedSumStmt->fetchColumn() ?: 0);
 
+            // Account activity (last 3 months) grouped by account
+            $activitySql = "SELECT COALESCE(a.name, '(No account)') AS account_name,
+                                   SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0 THEN t.amount ELSE 0 END) AS scheduled_total,
+                                   SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
+                                   SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total
+                            FROM transactions t
+                            LEFT JOIN accounts a ON a.id = t.account_id
+                            WHERE t.owner = ?
+                              AND t.`date` >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+                            GROUP BY account_name
+                            HAVING scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL
+                            ORDER BY account_name ASC";
+            $actStmt = $pdo->prepare($activitySql);
+            $actStmt->execute([$owner]);
+            $accountActivity = $actStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
             // Accounts with activity in last 3 months (id => name)
             $accSql = "SELECT DISTINCT a.id, a.name
                        FROM accounts a
@@ -347,6 +380,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         ?>
 
         <div class="container my-4">
+          <?php if (!empty($accountActivity)): ?>
+            <div class="card mb-3 shadow-sm">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h2 class="h6 mb-0">Account Activity (last 3 months)</h2>
+                  <span class="text-body-secondary small">Scheduled / Pending / Posted</span>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th scope="col">Account</th>
+                        <th scope="col" class="text-end">Scheduled</th>
+                        <th scope="col" class="text-end">Pending</th>
+                        <th scope="col" class="text-end">Posted</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <?php foreach ($accountActivity as $acct):
+                        $sched = (float)($acct['scheduled_total'] ?? 0);
+                        $pend = (float)($acct['pending_total'] ?? 0);
+                        $post = (float)($acct['posted_total'] ?? 0);
+                        $fmt = fn($v) => '$' . number_format($v, 2);
+                        $cls = fn($v) => $v < 0 ? 'text-danger' : 'text-success';
+                      ?>
+                        <tr>
+                          <td><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></td>
+                          <td class="text-end <?= $cls($sched) ?>"><?= $fmt($sched) ?></td>
+                          <td class="text-end <?= $cls($pend) ?>"><?= $fmt($pend) ?></td>
+                          <td class="text-end <?= $cls($post) ?>"><?= $fmt($post) ?></td>
+                        </tr>
+                      <?php endforeach; ?>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          <?php endif; ?>
+
           <div class="d-flex flex-wrap align-items-center justify-content-between mb-2 gap-2">
             <div class="d-flex align-items-center gap-2">
               <h2 class="h5 mb-0">Recent Transactions</h2>
@@ -356,6 +428,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               </button>
               <a class="btn btn-sm btn-outline-secondary" href="reminders.php<?= ($filterAccountId>0? ('?account_id='.(int)$filterAccountId) : '') ?>">Reminders</a>
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
+              <a class="btn btn-sm btn-outline-secondary" href="transactions.php">All transactions</a>
             </div>
             <form class="d-flex align-items-center gap-2" method="get" action="">
               <label for="filterAccount" class="form-label mb-0">Account</label>
@@ -444,12 +517,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account="<?= htmlspecialchars((string)$acct) ?>"
                           data-description="<?= htmlspecialchars((string)$desc) ?>"
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                          data-initiated="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>"
-                          data-mailed="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>"
-                          data-settled="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>"
-                          data-initiated="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>"
-                          data-mailed="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>"
-                          data-settled="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>"
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -573,9 +640,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-account="<?= htmlspecialchars((string)$acct) ?>"
                         data-description="<?= htmlspecialchars((string)$desc) ?>"
                         data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
-                        data-initiated="<?= htmlspecialchars((string)($row['initiated_date'] ?? '')) ?>"
-                        data-mailed="<?= htmlspecialchars((string)($row['mailed_date'] ?? '')) ?>"
-                        data-settled="<?= htmlspecialchars((string)($row['settled_date'] ?? '')) ?>"
                         data-status="2"
                         data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -655,6 +719,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             body
           }).then(() => window.location.reload());
         };
+        // Auto-submit when 6 digits are present (e.g., after SMS autofill)
+        const maybeAutoSubmit = () => {
+          const digits = (input.value || '').replace(/\D+/g, '');
+          if (digits.length === 6) {
+            form.submit();
+          }
+        };
+        input.addEventListener('input', maybeAutoSubmit);
         input.addEventListener('keydown', (event) => {
           if (event.key === 'Escape') {
             event.preventDefault();
@@ -665,6 +737,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             submitHiddenPost('resend-code');
           }
         });
+        // Try once on load in case the browser prefilled it
+        maybeAutoSubmit();
       })();
       </script>
     <?php endif; ?>
@@ -724,20 +798,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   </select>
                 </div>
               </div>
-              <div class="row g-2 mb-2 d-none" id="txCheckDates">
-                <div class="col-4">
-                  <label class="form-label">Initiated</label>
-                  <input type="date" class="form-control" name="initiated_date" id="txInitiated">
-                </div>
-                <div class="col-4">
-                  <label class="form-label">Mailed</label>
-                  <input type="date" class="form-control" name="mailed_date" id="txMailed">
-                </div>
-                <div class="col-4">
-                  <label class="form-label">Settled</label>
-                  <input type="date" class="form-control" name="settled_date" id="txSettled">
-                </div>
-              </div>
               </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -775,29 +835,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const form = document.getElementById('editTxForm');
         const g = (id) => document.getElementById(id);
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
-        const checkDatesWrap = g('txCheckDates');
-        const checkInput = g('txCheck');
-        const statusControl = g('txStatus');
-        const dateInput = g('txDate');
-        const toggleCheckDates = () => {
-          if (!checkDatesWrap) return;
-          const hasCheck = !!(checkInput && checkInput.value.trim());
-          if (hasCheck) {
-            checkDatesWrap.classList.remove('d-none');
-            const initInput = g('txInitiated');
-            if (initInput && !initInput.value && dateInput && dateInput.value) initInput.value = dateInput.value;
-            if (statusControl && statusControl.value === '2') {
-              const settledInput = g('txSettled');
-              if (settledInput && !settledInput.value && dateInput && dateInput.value) settledInput.value = dateInput.value;
-            }
-          } else {
-            checkDatesWrap.classList.add('d-none');
-            setv('txInitiated','');
-            setv('txMailed','');
-            setv('txSettled','');
-          }
-        };
-        checkInput && checkInput.addEventListener('input', toggleCheckDates);
         function openEditFromRow(row){
           if (!row) return;
           setv('txId', row.dataset.id || '');
@@ -830,16 +867,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription', row.dataset.description || '');
           setv('txCheck', row.dataset.check || '');
-          setv('txInitiated', row.dataset.initiated || row.dataset.date || '');
-          setv('txMailed', row.dataset.mailed || '');
-          setv('txSettled', row.dataset.settled || '');
           const statusVal = row.dataset.status ?? '1';
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
-          toggleCheckDates();
-          if ((!row.dataset.settled || row.dataset.settled === '') && statusVal === '2') {
-            const fallback = row.dataset.date || row.dataset.initiated || '';
-            if (fallback) setv('txSettled', fallback);
-          }
           modal && modal.show();
         }
         // Clickable cells open edit
@@ -885,11 +914,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           setv('txDescription','');
           setv('txCheck','');
-          setv('txInitiated','');
-          setv('txMailed','');
-          setv('txSettled','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
-          toggleCheckDates();
           modal && modal.show();
         });
         // Toggle new account input visibility on select change
@@ -898,29 +923,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const newInput = g('txAccountNew');
           if (!newInput) return;
           if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
-        });
-
-        statusControl && statusControl.addEventListener('change', () => {
-          const settled = g('txSettled');
-          const dateInput = g('txDate');
-          if (!settled) return;
-          if (statusControl.value === '2') {
-            if (checkInput && checkInput.value.trim() && !settled.value && dateInput) settled.value = dateInput.value || '';
-          } else {
-            settled.value = '';
-          }
-        });
-
-        dateInput && dateInput.addEventListener('change', () => {
-          const initInput = g('txInitiated');
-          const idInput = g('txId');
-          if (initInput && dateInput.value && checkInput && checkInput.value.trim() && (!idInput || !idInput.value) && !initInput.value) {
-            initInput.value = dateInput.value;
-          }
-          if (statusControl && statusControl.value === '2' && checkInput && checkInput.value.trim()) {
-            const settled = g('txSettled');
-            if (settled) settled.value = dateInput.value || '';
-          }
         });
 
         // Header add buttons (Scheduled/Pending/Posted-date)
@@ -958,14 +960,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txDescription','');
           setv('txCheck','');
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
-          setv('txInitiated','');
-          setv('txMailed','');
-          setv('txSettled','');
-          toggleCheckDates();
           modal && modal.show();
         });
-
-        toggleCheckDates();
 
         form && form.addEventListener('submit', async (ev) => {
           ev.preventDefault();
