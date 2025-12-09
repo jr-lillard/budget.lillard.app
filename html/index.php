@@ -357,7 +357,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                             LEFT JOIN accounts a ON a.id = t.account_id
                             WHERE t.owner = ?
                             GROUP BY account_name
-                            HAVING scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL";
+                            HAVING (scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL)";
             $paramsActivity = [$owner];
             if ($activityMonths !== '0') {
                 $activitySql .= " AND last_tx_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)";
