@@ -29,6 +29,8 @@ $currentUser = $sessionUser;
 $recentTx = [];
 $recentError = '';
 $accountActivity = [];
+$activityMonths = '0';
+$activityMonths = '0';
 
 /**
  * Send a one-time login code to the given email address.
@@ -278,6 +280,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
             budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
             $owner = $currentUser;
+            // Activity filter persistence
+            $validActivityOptions = ['0','3','6','9','12'];
+            $activityMonths = isset($_GET['activity_months']) ? (string)$_GET['activity_months'] : (string)($_COOKIE['activity_months'] ?? '0');
+            if (!in_array($activityMonths, $validActivityOptions, true)) {
+                $activityMonths = '0';
+            }
+            // remember selection
+            setcookie('activity_months', $activityMonths, [
+                'expires' => time() + 365*24*60*60,
+                'path' => '/',
+                'secure' => auth_is_https(),
+                'httponly' => false,
+                'samesite' => 'Lax',
+            ]);
             // Remember account filter for the session
             $filterAccountId = 0;
             if (array_key_exists('account_id', $_GET)) {
@@ -330,19 +346,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $schedSumStmt->execute($schedSumParams);
             $schedTotalAmount = (float)($schedSumStmt->fetchColumn() ?: 0);
 
-            // Account activity (all time) grouped by account
+            // Account activity grouped by account (all time), with optional inactivity filter
             $activitySql = "SELECT COALESCE(a.name, '(No account)') AS account_name,
+                                   COUNT(*) AS tx_count,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0 THEN t.amount ELSE 0 END) AS scheduled_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
-                                   SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total
+                                   SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total,
+                                   MAX(t.`date`) AS last_tx_date
                             FROM transactions t
                             LEFT JOIN accounts a ON a.id = t.account_id
                             WHERE t.owner = ?
                             GROUP BY account_name
-                            HAVING scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL
-                            ORDER BY account_name ASC";
+                            HAVING scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL";
+            $paramsActivity = [$owner];
+            if ($activityMonths !== '0') {
+                $activitySql .= " AND last_tx_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)";
+                $paramsActivity[] = (int)$activityMonths;
+            }
+            $activitySql .= " ORDER BY account_name ASC";
             $actStmt = $pdo->prepare($activitySql);
-            $actStmt->execute([$owner]);
+            $actStmt->execute($paramsActivity);
             $accountActivity = $actStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             // Accounts with activity in last 3 months (id => name)
@@ -382,31 +405,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           <?php if (!empty($accountActivity)): ?>
             <div class="card mb-3 shadow-sm">
               <div class="card-body">
+                <form class="d-flex flex-wrap gap-2 align-items-center mb-2" method="get" action="">
+                  <label class="form-label mb-0" for="activity_months">Hide inactive &gt;</label>
+                  <select id="activity_months" name="activity_months" class="form-select form-select-sm" style="width: 160px;">
+                    <option value="0" <?= $activityMonths === '0' ? 'selected' : '' ?>>Show all accounts</option>
+                    <option value="3" <?= $activityMonths === '3' ? 'selected' : '' ?>>3 months</option>
+                    <option value="6" <?= $activityMonths === '6' ? 'selected' : '' ?>>6 months</option>
+                    <option value="9" <?= $activityMonths === '9' ? 'selected' : '' ?>>9 months</option>
+                    <option value="12" <?= $activityMonths === '12' ? 'selected' : '' ?>>12 months</option>
+                  </select>
+                  <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
+                </form>
                 <div class="table-responsive">
                   <table class="table table-sm align-middle mb-0">
                     <thead class="table-light">
                       <tr>
                         <th scope="col">Account</th>
+                        <th scope="col" class="text-end">Count</th>
                         <th scope="col" class="text-end">Scheduled</th>
                         <th scope="col" class="text-end">Pending</th>
                         <th scope="col" class="text-end">Posted</th>
                       </tr>
                     </thead>
                     <tbody>
+                      <?php
+                        $totCount = 0; $totSched = 0.0; $totPend = 0.0; $totPost = 0.0;
+                      ?>
                       <?php foreach ($accountActivity as $acct):
                         $sched = (float)($acct['scheduled_total'] ?? 0);
                         $pend = (float)($acct['pending_total'] ?? 0);
                         $post = (float)($acct['posted_total'] ?? 0);
+                        $cnt = (int)($acct['tx_count'] ?? 0);
                         $fmt = fn($v) => '$' . number_format($v, 2);
                         $cls = fn($v) => $v < 0 ? 'text-danger' : 'text-success';
+                        $totCount += $cnt; $totSched += $sched; $totPend += $pend; $totPost += $post;
                       ?>
                         <tr>
                           <td><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></td>
+                          <td class="text-end"><?= number_format($cnt) ?></td>
                           <td class="text-end <?= $cls($sched) ?>"><?= $fmt($sched) ?></td>
                           <td class="text-end <?= $cls($pend) ?>"><?= $fmt($pend) ?></td>
                           <td class="text-end <?= $cls($post) ?>"><?= $fmt($post) ?></td>
                         </tr>
                       <?php endforeach; ?>
+                      <tr class="table-light fw-semibold">
+                        <td>Totals</td>
+                        <td class="text-end"><?= number_format($totCount) ?></td>
+                        <td class="text-end <?= ($totSched < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totSched, 2) ?></td>
+                        <td class="text-end <?= ($totPend < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totPend, 2) ?></td>
+                        <td class="text-end <?= ($totPost < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totPost, 2) ?></td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
