@@ -362,7 +362,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total,
                                    MAX(t.`date`) AS last_tx_date,
-                                   IFNULL(a.is_client, 0) AS is_client
+                                   MAX(IFNULL(a.is_client, 0)) AS is_client
                             FROM transactions t
                             LEFT JOIN accounts a ON a.id = t.account_id
                             WHERE t.owner = ?
