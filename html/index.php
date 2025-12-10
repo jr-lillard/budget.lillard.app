@@ -30,6 +30,7 @@ $recentTx = [];
 $recentError = '';
 $accountActivity = [];
 $activityMonths = '0';
+$hideClients = '0';
 $activityMonths = '0';
 
 /**
@@ -286,8 +287,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             if (!in_array($activityMonths, $validActivityOptions, true)) {
                 $activityMonths = '0';
             }
+            $hideClients = isset($_GET['hide_clients']) ? '1' : ((string)($_COOKIE['hide_clients'] ?? '0') === '1' ? '1' : '0');
             // remember selection
             setcookie('activity_months', $activityMonths, [
+                'expires' => time() + 365*24*60*60,
+                'path' => '/',
+                'secure' => auth_is_https(),
+                'httponly' => false,
+                'samesite' => 'Lax',
+            ]);
+            setcookie('hide_clients', $hideClients, [
                 'expires' => time() + 365*24*60*60,
                 'path' => '/',
                 'secure' => auth_is_https(),
@@ -352,7 +361,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0 THEN t.amount ELSE 0 END) AS scheduled_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total,
-                                   MAX(t.`date`) AS last_tx_date
+                                   MAX(t.`date`) AS last_tx_date,
+                                   IFNULL(a.is_client, 0) AS is_client
                             FROM transactions t
                             LEFT JOIN accounts a ON a.id = t.account_id
                             WHERE t.owner = ?
@@ -362,6 +372,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             if ($activityMonths !== '0') {
                 $activitySql .= " AND last_tx_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)";
                 $paramsActivity[] = (int)$activityMonths;
+            }
+            if ($hideClients === '1') {
+                $activitySql .= " AND IFNULL(is_client,0) = 0";
             }
             $activitySql .= " ORDER BY account_name ASC";
             $actStmt = $pdo->prepare($activitySql);
@@ -414,6 +427,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <option value="9" <?= $activityMonths === '9' ? 'selected' : '' ?>>9 months</option>
                     <option value="12" <?= $activityMonths === '12' ? 'selected' : '' ?>>12 months</option>
                   </select>
+                  <div class="form-check form-check-inline ms-2">
+                    <input class="form-check-input" type="checkbox" id="hide_clients" name="hide_clients" value="1" <?= $hideClients === '1' ? 'checked' : '' ?>>
+                    <label class="form-check-label" for="hide_clients">Hide clients</label>
+                  </div>
                   <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
                 </form>
                 <div class="table-responsive">
@@ -436,12 +453,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $pend = (float)($acct['pending_total'] ?? 0);
                         $post = (float)($acct['posted_total'] ?? 0);
                         $cnt = (int)($acct['tx_count'] ?? 0);
+                        $isClient = (int)($acct['is_client'] ?? 0) === 1;
                         $fmt = fn($v) => '$' . number_format($v, 2);
                         $cls = fn($v) => $v < 0 ? 'text-danger' : 'text-success';
                         $totCount += $cnt; $totSched += $sched; $totPend += $pend; $totPost += $post;
                       ?>
                         <tr>
-                          <td><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></td>
+                          <td>
+                            <div class="d-flex flex-column">
+                              <span><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></span>
+                              <div class="d-flex align-items-center gap-2 small text-body-secondary">
+                                <?php if ($isClient): ?><span class="badge text-bg-warning">Client</span><?php endif; ?>
+                                <form method="post" action="account_client_toggle.php" class="d-inline">
+                                  <input type="hidden" name="account_name" value="<?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?>">
+                                  <input type="hidden" name="is_client" value="<?= $isClient ? '0' : '1' ?>">
+                                  <button type="submit" class="btn btn-link btn-sm p-0 align-baseline">
+                                    <?= $isClient ? 'Unmark client' : 'Mark client' ?>
+                                  </button>
+                                </form>
+                              </div>
+                            </div>
+                          </td>
                           <td class="text-end"><?= number_format($cnt) ?></td>
                           <td class="text-end <?= $cls($sched) ?>"><?= $fmt($sched) ?></td>
                           <td class="text-end <?= $cls($pend) ?>"><?= $fmt($pend) ?></td>
