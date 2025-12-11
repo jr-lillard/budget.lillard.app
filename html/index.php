@@ -460,17 +460,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       ?>
                         <tr>
                           <td>
-                            <div class="d-flex flex-column">
+                            <div class="d-flex align-items-center gap-2">
                               <span><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></span>
-                              <div class="d-flex align-items-center gap-2 small text-body-secondary">
-                                <?php if ($isClient): ?><span class="badge text-bg-warning">Client</span><?php endif; ?>
-                                <form method="post" action="account_client_toggle.php" class="d-inline">
-                                  <input type="hidden" name="account_name" value="<?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?>">
-                                  <input type="hidden" name="is_client" value="<?= $isClient ? '0' : '1' ?>">
-                                  <button type="submit" class="btn btn-link btn-sm p-0 align-baseline">
-                                    <?= $isClient ? 'Unmark client' : 'Mark client' ?>
-                                  </button>
-                                </form>
+                              <?php if ($isClient): ?><span class="badge text-bg-warning">Client</span><?php endif; ?>
+                              <div class="dropdown">
+                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                  <i class="bi bi-three-dots-vertical"></i>
+                                </button>
+                                <ul class="dropdown-menu">
+                                  <li>
+                                    <form method="post" action="account_client_toggle.php" class="px-3 py-1">
+                                      <input type="hidden" name="account_name" value="<?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?>">
+                                      <input type="hidden" name="is_client" value="<?= $isClient ? '0' : '1' ?>">
+                                      <button type="submit" class="btn btn-link p-0">
+                                        <?= $isClient ? 'Unmark client' : 'Mark client' ?>
+                                      </button>
+                                    </form>
+                                  </li>
+                                </ul>
                               </div>
                             </div>
                           </td>
