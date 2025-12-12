@@ -464,7 +464,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                               <span><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></span>
                               <?php if ($isClient): ?><span class="badge text-bg-warning">Client</span><?php endif; ?>
                               <div class="dropdown">
-                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <button class="btn btn-sm border-0 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Account actions">
                                   <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                                 <ul class="dropdown-menu">
