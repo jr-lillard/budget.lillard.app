@@ -357,7 +357,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
             // Account activity grouped by account (all time), with optional inactivity filter
             $activitySql = "SELECT COALESCE(a.name, '(No account)') AS account_name,
-                                   COUNT(*) AS tx_count,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0 THEN t.amount ELSE 0 END) AS scheduled_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total,
@@ -438,7 +437,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <thead class="table-light">
                       <tr>
                         <th scope="col">Account</th>
-                        <th scope="col" class="text-end">Count</th>
                         <th scope="col" class="text-end">Scheduled</th>
                         <th scope="col" class="text-end">Pending</th>
                         <th scope="col" class="text-end">Posted</th>
@@ -446,17 +444,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     </thead>
                     <tbody>
                       <?php
-                        $totCount = 0; $totSched = 0.0; $totPend = 0.0; $totPost = 0.0;
+                        $totSched = 0.0; $totPend = 0.0; $totPost = 0.0;
                       ?>
                       <?php foreach ($accountActivity as $acct):
                         $sched = (float)($acct['scheduled_total'] ?? 0);
                         $pend = (float)($acct['pending_total'] ?? 0);
                         $post = (float)($acct['posted_total'] ?? 0);
-                        $cnt = (int)($acct['tx_count'] ?? 0);
                         $isClient = (int)($acct['is_client'] ?? 0) === 1;
                         $fmt = fn($v) => '$' . number_format($v, 2);
                         $cls = fn($v) => $v < 0 ? 'text-danger' : 'text-success';
-                        $totCount += $cnt; $totSched += $sched; $totPend += $pend; $totPost += $post;
+                        $totSched += $sched; $totPend += $pend; $totPost += $post;
+                        $postDisplay = $post;
+                        $pendDisplay = $post + $pend;
+                        $schedDisplay = $post + $pend + $sched;
                       ?>
                         <tr>
                           <td>
@@ -481,18 +481,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                               </div>
                             </div>
                           </td>
-                          <td class="text-end"><?= number_format($cnt) ?></td>
-                          <td class="text-end <?= $cls($sched) ?>"><?= $fmt($sched) ?></td>
-                          <td class="text-end <?= $cls($pend) ?>"><?= $fmt($pend) ?></td>
-                          <td class="text-end <?= $cls($post) ?>"><?= $fmt($post) ?></td>
+                          <td class="text-end <?= $cls($schedDisplay) ?>"><?= $fmt($schedDisplay) ?></td>
+                          <td class="text-end <?= $cls($pendDisplay) ?>"><?= $fmt($pendDisplay) ?></td>
+                          <td class="text-end <?= $cls($postDisplay) ?>"><?= $fmt($postDisplay) ?></td>
                         </tr>
                       <?php endforeach; ?>
                       <tr class="table-light fw-semibold">
                         <td>Totals</td>
-                        <td class="text-end"><?= number_format($totCount) ?></td>
-                        <td class="text-end <?= ($totSched < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totSched, 2) ?></td>
-                        <td class="text-end <?= ($totPend < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totPend, 2) ?></td>
-                        <td class="text-end <?= ($totPost < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totPost, 2) ?></td>
+                        <?php
+                          $totPostDisplay = $totPost;
+                          $totPendDisplay = $totPost + $totPend;
+                          $totSchedDisplay = $totPost + $totPend + $totSched;
+                        ?>
+                        <td class="text-end <?= ($totSchedDisplay < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totSchedDisplay, 2) ?></td>
+                        <td class="text-end <?= ($totPendDisplay < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totPendDisplay, 2) ?></td>
+                        <td class="text-end <?= ($totPostDisplay < 0 ? 'text-danger' : 'text-success') ?>"><?= '$' . number_format($totPostDisplay, 2) ?></td>
                       </tr>
                     </tbody>
                   </table>
