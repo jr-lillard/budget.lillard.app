@@ -310,13 +310,36 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
         const excludeField = form?.querySelector('[name="exclude"]');
         const accountSelect = form?.querySelector('select[name="account_id[]"]');
         const selectAllLink = form?.querySelector('.js-select-all-accounts');
-        if (!form || !excludeField) return;
+        if (!form) return;
 
         const normalize = (value) => value.replace(/\s+/g, ' ').trim();
+
+        if (window.bootstrap?.Dropdown) {
+          document.querySelectorAll('[data-bs-toggle="dropdown"]').forEach((toggle) => {
+            window.bootstrap.Dropdown.getOrCreateInstance(toggle);
+          });
+        } else {
+          document.addEventListener('click', (event) => {
+            const toggle = event.target.closest('[data-bs-toggle="dropdown"]');
+            const openMenus = document.querySelectorAll('.dropdown-menu.show');
+            if (!toggle) {
+              openMenus.forEach((menu) => menu.classList.remove('show'));
+              return;
+            }
+            event.preventDefault();
+            const parent = toggle.closest('.dropdown');
+            const menu = parent ? parent.querySelector('.dropdown-menu') : null;
+            if (!menu) return;
+            const shouldOpen = !menu.classList.contains('show');
+            openMenus.forEach((m) => m.classList.remove('show'));
+            if (shouldOpen) menu.classList.add('show');
+          });
+        }
 
         document.addEventListener('click', (event) => {
           const action = event.target.closest('.tx-exclude-action');
           if (!action) return;
+          if (!excludeField) return;
           event.preventDefault();
           const raw = action.dataset.desc || '';
           const desc = normalize(raw);
