@@ -22,8 +22,27 @@ $totalRows = 0;
 $limit = 50;
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $limit;
+$rawAccountFilter = $_GET['account_id'] ?? null;
+$hasAccountFilter = array_key_exists('account_id', $_GET);
+$accountIds = [];
+if (is_array($rawAccountFilter)) {
+    foreach ($rawAccountFilter as $value) {
+        if ($value === '' || $value === null) { continue; }
+        if (is_numeric($value)) {
+            $id = (int)$value;
+            if ($id > 0) { $accountIds[] = $id; }
+        }
+    }
+} elseif ($rawAccountFilter !== null && $rawAccountFilter !== '') {
+    if (is_numeric($rawAccountFilter)) {
+        $id = (int)$rawAccountFilter;
+        if ($id > 0) { $accountIds[] = $id; }
+    }
+}
+$accountIds = array_values(array_unique($accountIds));
+
 $filters = [
-    'account_id' => isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0,
+    'account_id' => $accountIds,
     'start_date' => (string)($_GET['start_date'] ?? ''),
     'end_date' => (string)($_GET['end_date'] ?? ''),
     'q' => trim((string)($_GET['q'] ?? '')),
@@ -49,7 +68,15 @@ try {
 
     $where = ['t.owner = ?'];
     $params = [$owner];
-    if ($filters['account_id'] > 0) { $where[] = 't.account_id = ?'; $params[] = $filters['account_id']; }
+    if ($hasAccountFilter) {
+        if (empty($accountIds)) {
+            $where[] = '1=0';
+        } else {
+            $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
+            $where[] = "t.account_id IN ($placeholders)";
+            foreach ($accountIds as $id) { $params[] = $id; }
+        }
+    }
     if ($filters['start_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['start_date'])) { $where[] = 't.`date` >= ?'; $params[] = $filters['start_date']; }
     if ($filters['end_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['end_date'])) { $where[] = 't.`date` <= ?'; $params[] = $filters['end_date']; }
     if ($filters['q'] !== '') {
@@ -187,12 +214,14 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
                 </div>
               </th>
               <th>
-                <select class="form-select form-select-sm" name="account_id">
-                  <option value="0">All</option>
-                  <?php foreach ($accounts as $id => $name): ?>
-                    <option value="<?= (int)$id ?>" <?= $filters['account_id'] === (int)$id ? 'selected' : '' ?>><?= h($name) ?></option>
+                <select class="form-select form-select-sm" name="account_id[]" multiple size="6">
+                  <?php foreach ($accounts as $id => $name):
+                    $selected = $hasAccountFilter ? in_array((int)$id, $accountIds, true) : true;
+                  ?>
+                    <option value="<?= (int)$id ?>" <?= $selected ? 'selected' : '' ?>><?= h($name) ?></option>
                   <?php endforeach; ?>
                 </select>
+                <div class="form-text small">All accounts selected by default. Deselect to filter.</div>
               </th>
               <th>
                 <div class="d-flex flex-column gap-1">
