@@ -122,6 +122,64 @@ function budget_clear_tx_filters(PDO $pdo, string $username): void
     }
 }
 
+function budget_list_saved_filters(PDO $pdo, string $username): array
+{
+    try {
+        $stmt = $pdo->prepare('SELECT name FROM user_saved_filters WHERE username = ? ORDER BY name ASC');
+        $stmt->execute([$username]);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function budget_load_saved_filter(PDO $pdo, string $username, string $name, array $defaults): ?array
+{
+    try {
+        $stmt = $pdo->prepare('SELECT filters FROM user_saved_filters WHERE username = ? AND name = ?');
+        $stmt->execute([$username, $name]);
+        $raw = $stmt->fetchColumn();
+        if (!$raw) { return null; }
+        $data = json_decode((string)$raw, true);
+        if (!is_array($data)) { return null; }
+        return budget_normalize_filters($data, $defaults);
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function budget_save_named_filter(PDO $pdo, string $username, string $name, array $filters, array $defaults): bool
+{
+    $name = trim($name);
+    if ($name === '') { return false; }
+    $payload = budget_normalize_filters($filters, $defaults);
+    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) { return false; }
+    try {
+        $stmt = $pdo->prepare('SELECT 1 FROM user_saved_filters WHERE username = ? AND name = ?');
+        $stmt->execute([$username, $name]);
+        if ($stmt->fetchColumn()) {
+            return false; // block overwrites
+        }
+        $ins = $pdo->prepare('INSERT INTO user_saved_filters (username, name, filters) VALUES (?, ?, ?)');
+        $ins->execute([$username, $name, $json]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function budget_delete_saved_filter(PDO $pdo, string $username, string $name): bool
+{
+    try {
+        $stmt = $pdo->prepare('DELETE FROM user_saved_filters WHERE username = ? AND name = ?');
+        $stmt->execute([$username, $name]);
+        return $stmt->rowCount() > 0;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 $filterKeys = ['start_date', 'end_date', 'account_q', 'account_exclude', 'q', 'exclude', 'min_amount', 'max_amount', 'status', 'sort', 'dir'];
 $hasGetFilters = false;
 foreach ($filterKeys as $key) {
@@ -168,6 +226,8 @@ try {
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
     $owner = $currentUser;
+    $flash = $_SESSION['tx_filter_flash'] ?? null;
+    unset($_SESSION['tx_filter_flash']);
 
     if (isset($_GET['reset'])) {
         unset($_SESSION['tx_filters']);
@@ -179,11 +239,61 @@ try {
     $savedFilters = budget_load_tx_filters($pdo, $owner, $filterDefaults);
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $action = (string)($_POST['saved_action'] ?? '');
+        if ($action === 'load') {
+            $name = trim((string)($_POST['saved_select'] ?? ''));
+            if ($name === '') {
+                $_SESSION['tx_filter_flash'] = ['type' => 'warning', 'message' => 'Choose a saved filter to load.'];
+            } else {
+                $loaded = budget_load_saved_filter($pdo, $owner, $name, $filterDefaults);
+                if ($loaded === null) {
+                    $_SESSION['tx_filter_flash'] = ['type' => 'danger', 'message' => 'Saved filter not found.'];
+                } else {
+                    $parsed = [
+                        'filters' => $loaded,
+                        'account_filter_active' => (($loaded['account_q'] ?? '') !== '' || ($loaded['account_exclude'] ?? '') !== ''),
+                    ];
+                    $_SESSION['tx_filters'] = $parsed;
+                    budget_save_tx_filters($pdo, $owner, $parsed['filters'], (bool)$parsed['account_filter_active'], $filterDefaults);
+                    $_SESSION['tx_filter_flash'] = ['type' => 'success', 'message' => 'Loaded saved filter: ' . $name];
+                }
+            }
+            header('Location: transactions.php?page=1');
+            exit;
+        }
+
+        if ($action === 'delete') {
+            $name = trim((string)($_POST['saved_select'] ?? ''));
+            if ($name === '') {
+                $_SESSION['tx_filter_flash'] = ['type' => 'warning', 'message' => 'Choose a saved filter to delete.'];
+            } else {
+                $deleted = budget_delete_saved_filter($pdo, $owner, $name);
+                $_SESSION['tx_filter_flash'] = $deleted
+                    ? ['type' => 'success', 'message' => 'Deleted saved filter: ' . $name]
+                    : ['type' => 'danger', 'message' => 'Saved filter not found.'];
+            }
+            header('Location: transactions.php');
+            exit;
+        }
+
         $parsed = budget_extract_filters($_POST);
         $parsed['filters'] = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
         $_SESSION['tx_filters'] = $parsed;
         $accountActive = (($parsed['filters']['account_q'] ?? '') !== '' || ($parsed['filters']['account_exclude'] ?? '') !== '');
         budget_save_tx_filters($pdo, $owner, $parsed['filters'], $accountActive, $filterDefaults);
+
+        if ($action === 'save') {
+            $name = trim((string)($_POST['saved_name'] ?? ''));
+            if ($name === '') {
+                $_SESSION['tx_filter_flash'] = ['type' => 'warning', 'message' => 'Enter a name to save this filter.'];
+            } else {
+                $saved = budget_save_named_filter($pdo, $owner, $name, $parsed['filters'], $filterDefaults);
+                $_SESSION['tx_filter_flash'] = $saved
+                    ? ['type' => 'success', 'message' => 'Saved filter: ' . $name]
+                    : ['type' => 'danger', 'message' => 'A saved filter with that name already exists.'];
+            }
+        }
+
         $targetPage = max(1, (int)($_POST['page'] ?? 1));
         $scrollY = (int)($_POST['scroll_y'] ?? 0);
         $query = ['page' => $targetPage];
@@ -208,6 +318,7 @@ try {
     }
 
     $filters = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
+    $savedNames = budget_list_saved_filters($pdo, $owner);
 
     $where = ['t.owner = ?'];
     $params = [$owner];
@@ -342,6 +453,11 @@ function budget_sort_default_dir(string $col): string
     </nav>
 
     <main class="container my-4">
+      <?php if (!empty($flash) && isset($flash['message'])): ?>
+        <div class="alert alert-<?= h((string)($flash['type'] ?? 'info')) ?> small" role="alert">
+          <?= h((string)$flash['message']) ?>
+        </div>
+      <?php endif; ?>
       <?php if ($error !== ''): ?>
         <div class="alert alert-danger" role="alert"><?= h($error) ?></div>
       <?php endif; ?>
@@ -356,6 +472,18 @@ function budget_sort_default_dir(string $col): string
             <a class="btn btn-outline-secondary btn-sm<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(['page' => $page + 1])) : '#' ?>">Next »</a>
           </div>
         </div>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <input type="text" form="txFilterForm" name="saved_name" class="form-control form-control-sm" style="max-width: 220px;" placeholder="Save filter as…">
+        <button type="submit" form="txFilterForm" class="btn btn-outline-primary btn-sm" name="saved_action" value="save">Save</button>
+        <select form="txFilterForm" name="saved_select" class="form-select form-select-sm" style="max-width: 240px;">
+          <option value="">Saved filters…</option>
+          <?php foreach (($savedNames ?? []) as $name): ?>
+            <option value="<?= h((string)$name) ?>"><?= h((string)$name) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <button type="submit" form="txFilterForm" class="btn btn-outline-secondary btn-sm" name="saved_action" value="load">Load</button>
+        <button type="submit" form="txFilterForm" class="btn btn-outline-danger btn-sm" name="saved_action" value="delete">Delete</button>
       </div>
 
       <form id="txFilterForm" method="post" class="table-responsive" data-page="<?= (int)$page ?>">
