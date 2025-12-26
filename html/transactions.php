@@ -137,8 +137,8 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
             <tr class="align-middle bg-body">
               <th>
                 <div class="d-flex flex-column gap-1">
-                  <input type="date" class="form-control form-control-sm" name="start_date" value="<?= h($filters['start_date']) ?>" placeholder="From">
-                  <input type="date" class="form-control form-control-sm" name="end_date" value="<?= h($filters['end_date']) ?>" placeholder="To">
+                  <input type="text" inputmode="numeric" pattern="\\d{4}-\\d{2}-\\d{2}" maxlength="10" class="form-control form-control-sm" name="start_date" value="<?= h($filters['start_date']) ?>" placeholder="YYYY-MM-DD" title="YYYY-MM-DD">
+                  <input type="text" inputmode="numeric" pattern="\\d{4}-\\d{2}-\\d{2}" maxlength="10" class="form-control form-control-sm" name="end_date" value="<?= h($filters['end_date']) ?>" placeholder="YYYY-MM-DD" title="YYYY-MM-DD">
                 </div>
               </th>
               <th>
