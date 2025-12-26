@@ -27,10 +27,16 @@ $filters = [
     'start_date' => (string)($_GET['start_date'] ?? ''),
     'end_date' => (string)($_GET['end_date'] ?? ''),
     'q' => trim((string)($_GET['q'] ?? '')),
+    'exclude' => trim((string)($_GET['exclude'] ?? '')),
     'min_amount' => trim((string)($_GET['min_amount'] ?? '')),
     'max_amount' => trim((string)($_GET['max_amount'] ?? '')),
     'status' => ($_GET['status'] ?? '') !== '' ? (string)$_GET['status'] : '', // '' = all, '0','1','2'
 ];
+
+function budget_escape_like(string $value): string
+{
+    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+}
 
 try {
     $pdo = get_mysql_connection();
@@ -49,6 +55,43 @@ try {
     if ($filters['q'] !== '') {
         $where[] = 't.description LIKE ?';
         $params[] = '%' . $filters['q'] . '%';
+    }
+    if ($filters['exclude'] !== '') {
+        $excludeExact = [];
+        $excludeContains = [];
+        foreach (preg_split('/\r\n|\r|\n/', $filters['exclude']) as $line) {
+            $line = trim($line);
+            if ($line === '') { continue; }
+            if (str_starts_with($line, '=')) {
+                $value = trim(substr($line, 1));
+                if ($value !== '') { $excludeExact[] = $value; }
+                continue;
+            }
+            if (strncasecmp($line, 'exact:', 6) === 0) {
+                $value = trim(substr($line, 6));
+                if ($value !== '') { $excludeExact[] = $value; }
+                continue;
+            }
+            if (strncasecmp($line, 'contains:', 9) === 0) {
+                $value = trim(substr($line, 9));
+                if ($value !== '') { $excludeContains[] = $value; }
+                continue;
+            }
+            $excludeContains[] = $line;
+        }
+        if (!empty($excludeExact)) {
+            $excludeExact = array_values(array_unique($excludeExact));
+            $placeholders = implode(',', array_fill(0, count($excludeExact), '?'));
+            $where[] = "COALESCE(t.description,'') NOT IN ($placeholders)";
+            foreach ($excludeExact as $value) { $params[] = $value; }
+        }
+        if (!empty($excludeContains)) {
+            $excludeContains = array_values(array_unique($excludeContains));
+            foreach ($excludeContains as $value) {
+                $where[] = "COALESCE(t.description,'') NOT LIKE ? ESCAPE '\\\\'";
+                $params[] = '%' . budget_escape_like($value) . '%';
+            }
+        }
     }
     if ($filters['min_amount'] !== '' && is_numeric($filters['min_amount'])) { $where[] = 't.amount >= ?'; $params[] = (float)$filters['min_amount']; }
     if ($filters['max_amount'] !== '' && is_numeric($filters['max_amount'])) { $where[] = 't.amount <= ?'; $params[] = (float)$filters['max_amount']; }
@@ -150,7 +193,11 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
                 </select>
               </th>
               <th>
-                <input type="text" class="form-control form-control-sm" name="q" value="<?= h($filters['q']) ?>" placeholder="Description contains">
+                <div class="d-flex flex-column gap-1">
+                  <input type="text" class="form-control form-control-sm" name="q" value="<?= h($filters['q']) ?>" placeholder="Description contains">
+                  <textarea class="form-control form-control-sm" name="exclude" rows="3" placeholder="Exclude descriptions (one per line)"><?= h($filters['exclude']) ?></textarea>
+                  <div class="form-text small">Prefix exact matches with = or exact:; otherwise treated as contains.</div>
+                </div>
               </th>
               <th>
                 <div class="d-flex flex-column gap-1">
