@@ -255,7 +255,9 @@ try {
     $whereSql = implode(' AND ', $where);
 
     // Total count
-    $countSql = "SELECT COUNT(*) FROM transactions t WHERE $whereSql";
+    $countSql = "SELECT COUNT(*) FROM transactions t
+                 LEFT JOIN accounts a ON a.id = t.account_id
+                 WHERE $whereSql";
     $countStmt = $pdo->prepare($countSql);
     $countStmt->execute($params);
     $totalRows = (int)$countStmt->fetchColumn();
