@@ -25,9 +25,10 @@ $offset = ($page - 1) * $limit;
 function budget_extract_filters(array $input): array
 {
     $filters = [
-        'account_id' => [],
         'start_date' => (string)($input['start_date'] ?? ''),
         'end_date' => (string)($input['end_date'] ?? ''),
+        'account_q' => trim((string)($input['account_q'] ?? '')),
+        'account_exclude' => trim((string)($input['account_exclude'] ?? '')),
         'q' => trim((string)($input['q'] ?? '')),
         'exclude' => trim((string)($input['exclude'] ?? '')),
         'min_amount' => trim((string)($input['min_amount'] ?? '')),
@@ -36,26 +37,7 @@ function budget_extract_filters(array $input): array
         'sort' => (string)($input['sort'] ?? ''),
         'dir' => (string)($input['dir'] ?? ''),
     ];
-    $accountFilterActive = array_key_exists('account_id', $input);
-    $accountIds = [];
-    if ($accountFilterActive) {
-        $raw = $input['account_id'] ?? null;
-        if (is_array($raw)) {
-            foreach ($raw as $value) {
-                if ($value === '' || $value === null) { continue; }
-                if (is_numeric($value)) {
-                    $id = (int)$value;
-                    if ($id > 0) { $accountIds[] = $id; }
-                }
-            }
-        } elseif ($raw !== null && $raw !== '') {
-            if (is_numeric($raw)) {
-                $id = (int)$raw;
-                if ($id > 0) { $accountIds[] = $id; }
-            }
-        }
-    }
-    $filters['account_id'] = array_values(array_unique($accountIds));
+    $accountFilterActive = ($filters['account_q'] !== '' || $filters['account_exclude'] !== '');
     return [
         'filters' => $filters,
         'account_filter_active' => $accountFilterActive,
@@ -63,9 +45,10 @@ function budget_extract_filters(array $input): array
 }
 
 $filterDefaults = [
-    'account_id' => [],
     'start_date' => '',
     'end_date' => '',
+    'account_q' => '',
+    'account_exclude' => '',
     'q' => '',
     'exclude' => '',
     'min_amount' => '',
@@ -78,15 +61,9 @@ $filterDefaults = [
 function budget_normalize_filters(array $filters, array $defaults): array
 {
     $merged = array_merge($defaults, $filters);
-    $ids = [];
-    foreach ((array)($merged['account_id'] ?? []) as $value) {
-        if ($value === '' || $value === null) { continue; }
-        if (is_numeric($value)) {
-            $id = (int)$value;
-            if ($id > 0) { $ids[] = $id; }
-        }
-    }
-    $merged['account_id'] = array_values(array_unique($ids));
+    unset($merged['account_id']);
+    $merged['account_q'] = trim((string)($merged['account_q'] ?? ''));
+    $merged['account_exclude'] = trim((string)($merged['account_exclude'] ?? ''));
     $allowedSort = ['date', 'account', 'description', 'amount', 'status'];
     if (!in_array((string)$merged['sort'], $allowedSort, true)) {
         $merged['sort'] = $defaults['sort'] ?? 'date';
@@ -145,7 +122,7 @@ function budget_clear_tx_filters(PDO $pdo, string $username): void
     }
 }
 
-$filterKeys = ['account_id', 'start_date', 'end_date', 'q', 'exclude', 'min_amount', 'max_amount', 'status', 'sort', 'dir'];
+$filterKeys = ['start_date', 'end_date', 'account_q', 'account_exclude', 'q', 'exclude', 'min_amount', 'max_amount', 'status', 'sort', 'dir'];
 $hasGetFilters = false;
 foreach ($filterKeys as $key) {
     if (array_key_exists($key, $_GET)) { $hasGetFilters = true; break; }
@@ -154,6 +131,36 @@ foreach ($filterKeys as $key) {
 function budget_escape_like(string $value): string
 {
     return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+}
+
+function budget_parse_exclusions(string $raw): array
+{
+    $excludeExact = [];
+    $excludeContains = [];
+    foreach (preg_split('/\r\n|\r|\n/', $raw) as $line) {
+        $line = trim($line);
+        if ($line === '') { continue; }
+        if (str_starts_with($line, '=')) {
+            $value = trim(substr($line, 1));
+            if ($value !== '') { $excludeExact[] = $value; }
+            continue;
+        }
+        if (strncasecmp($line, 'exact:', 6) === 0) {
+            $value = trim(substr($line, 6));
+            if ($value !== '') { $excludeExact[] = $value; }
+            continue;
+        }
+        if (strncasecmp($line, 'contains:', 9) === 0) {
+            $value = trim(substr($line, 9));
+            if ($value !== '') { $excludeContains[] = $value; }
+            continue;
+        }
+        $excludeContains[] = $line;
+    }
+    return [
+        array_values(array_unique($excludeExact)),
+        array_values(array_unique($excludeContains)),
+    ];
 }
 
 try {
@@ -175,7 +182,8 @@ try {
         $parsed = budget_extract_filters($_POST);
         $parsed['filters'] = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
         $_SESSION['tx_filters'] = $parsed;
-        budget_save_tx_filters($pdo, $owner, $parsed['filters'], (bool)($parsed['account_filter_active'] ?? false), $filterDefaults);
+        $accountActive = (($parsed['filters']['account_q'] ?? '') !== '' || ($parsed['filters']['account_exclude'] ?? '') !== '');
+        budget_save_tx_filters($pdo, $owner, $parsed['filters'], $accountActive, $filterDefaults);
         $targetPage = max(1, (int)($_POST['page'] ?? 1));
         $scrollY = (int)($_POST['scroll_y'] ?? 0);
         $query = ['page' => $targetPage];
@@ -188,7 +196,8 @@ try {
         $parsed = budget_extract_filters($_GET);
         $parsed['filters'] = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
         $_SESSION['tx_filters'] = $parsed;
-        budget_save_tx_filters($pdo, $owner, $parsed['filters'], (bool)($parsed['account_filter_active'] ?? false), $filterDefaults);
+        $accountActive = (($parsed['filters']['account_q'] ?? '') !== '' || ($parsed['filters']['account_exclude'] ?? '') !== '');
+        budget_save_tx_filters($pdo, $owner, $parsed['filters'], $accountActive, $filterDefaults);
     } elseif (!empty($_SESSION['tx_filters'])) {
         $parsed = $_SESSION['tx_filters'];
     } elseif (!empty($savedFilters)) {
@@ -199,21 +208,25 @@ try {
     }
 
     $filters = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
-    $hasAccountFilter = (bool)($parsed['account_filter_active'] ?? false);
-    $accountIds = $filters['account_id'] ?? [];
-
-    // Accounts for filter dropdown
-    $accounts = $pdo->query('SELECT id, name FROM accounts ORDER BY name ASC')->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
 
     $where = ['t.owner = ?'];
     $params = [$owner];
-    if ($hasAccountFilter) {
-        if (empty($accountIds)) {
-            $where[] = '1=0';
-        } else {
-            $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
-            $where[] = "t.account_id IN ($placeholders)";
-            foreach ($accountIds as $id) { $params[] = $id; }
+    if ($filters['account_q'] !== '') {
+        $where[] = 'COALESCE(a.name, \'\') LIKE ?';
+        $params[] = '%' . budget_escape_like($filters['account_q']) . '%';
+    }
+    if ($filters['account_exclude'] !== '') {
+        [$acctExact, $acctContains] = budget_parse_exclusions($filters['account_exclude']);
+        if (!empty($acctExact)) {
+            $placeholders = implode(',', array_fill(0, count($acctExact), '?'));
+            $where[] = "COALESCE(a.name, '') NOT IN ($placeholders)";
+            foreach ($acctExact as $value) { $params[] = $value; }
+        }
+        if (!empty($acctContains)) {
+            foreach ($acctContains as $value) {
+                $where[] = "COALESCE(a.name, '') NOT LIKE ? ESCAPE '\\\\'";
+                $params[] = '%' . budget_escape_like($value) . '%';
+            }
         }
     }
     if ($filters['start_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['start_date'])) { $where[] = 't.`date` >= ?'; $params[] = $filters['start_date']; }
@@ -223,36 +236,13 @@ try {
         $params[] = '%' . $filters['q'] . '%';
     }
     if ($filters['exclude'] !== '') {
-        $excludeExact = [];
-        $excludeContains = [];
-        foreach (preg_split('/\r\n|\r|\n/', $filters['exclude']) as $line) {
-            $line = trim($line);
-            if ($line === '') { continue; }
-            if (str_starts_with($line, '=')) {
-                $value = trim(substr($line, 1));
-                if ($value !== '') { $excludeExact[] = $value; }
-                continue;
-            }
-            if (strncasecmp($line, 'exact:', 6) === 0) {
-                $value = trim(substr($line, 6));
-                if ($value !== '') { $excludeExact[] = $value; }
-                continue;
-            }
-            if (strncasecmp($line, 'contains:', 9) === 0) {
-                $value = trim(substr($line, 9));
-                if ($value !== '') { $excludeContains[] = $value; }
-                continue;
-            }
-            $excludeContains[] = $line;
-        }
+        [$excludeExact, $excludeContains] = budget_parse_exclusions($filters['exclude']);
         if (!empty($excludeExact)) {
-            $excludeExact = array_values(array_unique($excludeExact));
             $placeholders = implode(',', array_fill(0, count($excludeExact), '?'));
             $where[] = "COALESCE(t.description,'') NOT IN ($placeholders)";
             foreach ($excludeExact as $value) { $params[] = $value; }
         }
         if (!empty($excludeContains)) {
-            $excludeContains = array_values(array_unique($excludeContains));
             foreach ($excludeContains as $value) {
                 $where[] = "COALESCE(t.description,'') NOT LIKE ? ESCAPE '\\\\'";
                 $params[] = '%' . budget_escape_like($value) . '%';
@@ -399,16 +389,10 @@ function budget_sort_default_dir(string $col): string
                 </div>
               </th>
               <th>
-                <select class="form-select form-select-sm" name="account_id[]" multiple size="6">
-                  <?php foreach ($accounts as $id => $name):
-                    $selected = $hasAccountFilter ? in_array((int)$id, $accountIds, true) : true;
-                  ?>
-                    <option value="<?= (int)$id ?>" <?= $selected ? 'selected' : '' ?>><?= h($name) ?></option>
-                  <?php endforeach; ?>
-                </select>
-                <div class="d-flex gap-2 align-items-center mt-1">
-                  <a href="#" class="small text-decoration-none js-select-all-accounts">Select all</a>
-                  <span class="text-body-secondary small">All accounts selected by default. Deselect to filter.</span>
+                <div class="d-flex flex-column gap-1">
+                  <input type="text" class="form-control form-control-sm" name="account_q" value="<?= h($filters['account_q'] ?? '') ?>" placeholder="Account contains">
+                  <textarea class="form-control form-control-sm" name="account_exclude" rows="3" placeholder="Exclude accounts (one per line)"><?= h($filters['account_exclude'] ?? '') ?></textarea>
+                  <div class="form-text small">Prefix exact matches with = or exact:; otherwise treated as contains.</div>
                 </div>
               </th>
               <th>
@@ -447,11 +431,13 @@ function budget_sort_default_dir(string $col): string
               $descRaw = (string)($r['description'] ?? '');
               $descAttr = trim(preg_replace('/\s+/', ' ', $descRaw));
               $descAttrSafe = h($descAttr);
-              $accountId = (int)($r['account_id'] ?? 0);
+              $accountNameRaw = (string)($r['account_name'] ?? '');
+              $accountAttr = trim(preg_replace('/\s+/', ' ', $accountNameRaw));
+              $accountAttrSafe = h($accountAttr);
             ?>
               <tr>
                 <td><?= h((string)$r['date']) ?></td>
-                <td><?= h((string)($r['account_name'] ?? '')) ?></td>
+                <td><?= h($accountNameRaw) ?></td>
                 <td><?= h($descRaw) ?></td>
                 <td class="text-end <?= $amtClass ?>">$<?= $amtFmt ?></td>
                 <td class="text-center"><?= h($statusLabel) ?></td>
@@ -469,7 +455,7 @@ function budget_sort_default_dir(string $col): string
                       </li>
                       <li><hr class="dropdown-divider"></li>
                       <li>
-                        <a class="dropdown-item tx-account-deselect" href="#" data-account-id="<?= $accountId ?>">Deselect this account</a>
+                        <a class="dropdown-item tx-account-exclude<?= $accountAttr === '' ? ' disabled' : '' ?>" href="#" data-account="<?= $accountAttrSafe ?>" <?= $accountAttr === '' ? 'aria-disabled="true"' : '' ?>>Exclude this account</a>
                       </li>
                     </ul>
                   </div>
@@ -493,8 +479,7 @@ function budget_sort_default_dir(string $col): string
       (() => {
         const form = document.getElementById('txFilterForm');
         const excludeField = form?.querySelector('[name="exclude"]');
-        const accountSelect = form?.querySelector('select[name="account_id[]"]');
-        const selectAllLink = form?.querySelector('.js-select-all-accounts');
+        const accountExcludeField = form?.querySelector('[name="account_exclude"]');
         const scrollField = form?.querySelector('[name="scroll_y"]');
         const sortField = form?.querySelector('[name="sort"]');
         const dirField = form?.querySelector('[name="dir"]');
@@ -584,28 +569,28 @@ function budget_sort_default_dir(string $col): string
         });
 
         document.addEventListener('click', (event) => {
-          const action = event.target.closest('.tx-account-deselect');
+          const action = event.target.closest('.tx-account-exclude');
           if (!action) return;
+          if (!accountExcludeField) return;
           event.preventDefault();
-          if (!accountSelect) return;
-          const id = action.dataset.accountId;
-          if (!id) return;
-          for (const option of accountSelect.options) {
-            if (option.value === id) {
-              option.selected = false;
-              break;
-            }
+          const raw = action.dataset.account || '';
+          const name = normalize(raw);
+          if (!name) return;
+          const entry = `=${name}`;
+          const existing = new Set(
+            accountExcludeField.value
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean)
+          );
+          if (!existing.has(entry)) {
+            existing.add(entry);
           }
+          accountExcludeField.value = Array.from(existing)
+            .sort((a, b) => a.localeCompare(b))
+            .join('\n');
           if (scrollField) scrollField.value = String(window.scrollY || 0);
           form.submit();
-        });
-
-        selectAllLink && selectAllLink.addEventListener('click', (event) => {
-          event.preventDefault();
-          if (!accountSelect) return;
-          for (const option of accountSelect.options) {
-            option.selected = true;
-          }
         });
       })();
     </script>
