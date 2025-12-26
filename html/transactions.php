@@ -196,6 +196,7 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
 
       <form id="txFilterForm" method="get" class="table-responsive">
         <input type="hidden" name="page" value="1">
+        <input type="hidden" name="scroll_y" value="<?= h((string)($_GET['scroll_y'] ?? '')) ?>">
         <table class="table table-sm align-middle">
           <thead class="table-light">
             <tr>
@@ -310,9 +311,22 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
         const excludeField = form?.querySelector('[name="exclude"]');
         const accountSelect = form?.querySelector('select[name="account_id[]"]');
         const selectAllLink = form?.querySelector('.js-select-all-accounts');
+        const scrollField = form?.querySelector('[name="scroll_y"]');
         if (!form) return;
 
         const normalize = (value) => value.replace(/\s+/g, ' ').trim();
+
+        const scrollParam = new URLSearchParams(window.location.search).get('scroll_y');
+        const scrollTarget = scrollParam ? parseInt(scrollParam, 10) : 0;
+        if (scrollTarget > 0) {
+          requestAnimationFrame(() => {
+            window.scrollTo(0, scrollTarget);
+          });
+        }
+
+        form.addEventListener('submit', () => {
+          if (scrollField) scrollField.value = String(window.scrollY || 0);
+        });
 
         if (window.bootstrap?.Dropdown) {
           document.querySelectorAll('[data-bs-toggle="dropdown"]').forEach((toggle) => {
@@ -357,6 +371,7 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
             existing.add(entry);
           }
           excludeField.value = Array.from(existing).join('\n');
+          if (scrollField) scrollField.value = String(window.scrollY || 0);
           form.submit();
         });
 
@@ -373,6 +388,7 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
               break;
             }
           }
+          if (scrollField) scrollField.value = String(window.scrollY || 0);
           form.submit();
         });
 
