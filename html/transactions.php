@@ -60,50 +60,83 @@ function budget_extract_filters(array $input): array
     ];
 }
 
+$filterDefaults = [
+    'account_id' => [],
+    'start_date' => '',
+    'end_date' => '',
+    'q' => '',
+    'exclude' => '',
+    'min_amount' => '',
+    'max_amount' => '',
+    'status' => '',
+];
+
+function budget_normalize_filters(array $filters, array $defaults): array
+{
+    $merged = array_merge($defaults, $filters);
+    $ids = [];
+    foreach ((array)($merged['account_id'] ?? []) as $value) {
+        if ($value === '' || $value === null) { continue; }
+        if (is_numeric($value)) {
+            $id = (int)$value;
+            if ($id > 0) { $ids[] = $id; }
+        }
+    }
+    $merged['account_id'] = array_values(array_unique($ids));
+    return $merged;
+}
+
+function budget_load_tx_filters(PDO $pdo, string $username, array $defaults): ?array
+{
+    try {
+        $stmt = $pdo->prepare('SELECT tx_filters FROM user_preferences WHERE username = ?');
+        $stmt->execute([$username]);
+        $raw = $stmt->fetchColumn();
+        if (!$raw) { return null; }
+        $data = json_decode((string)$raw, true);
+        if (!is_array($data)) { return null; }
+        $filters = isset($data['filters']) && is_array($data['filters']) ? $data['filters'] : [];
+        $active = (bool)($data['account_filter_active'] ?? false);
+        return [
+            'filters' => budget_normalize_filters($filters, $defaults),
+            'account_filter_active' => $active,
+        ];
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function budget_save_tx_filters(PDO $pdo, string $username, array $filters, bool $active, array $defaults): void
+{
+    $payload = [
+        'filters' => budget_normalize_filters($filters, $defaults),
+        'account_filter_active' => $active,
+    ];
+    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) { return; }
+    try {
+        $stmt = $pdo->prepare('INSERT INTO user_preferences (username, tx_filters) VALUES (?, ?) ON DUPLICATE KEY UPDATE tx_filters = VALUES(tx_filters), updated_at = CURRENT_TIMESTAMP');
+        $stmt->execute([$username, $json]);
+    } catch (Throwable $e) {
+        // ignore persistence errors
+    }
+}
+
+function budget_clear_tx_filters(PDO $pdo, string $username): void
+{
+    try {
+        $stmt = $pdo->prepare('DELETE FROM user_preferences WHERE username = ?');
+        $stmt->execute([$username]);
+    } catch (Throwable $e) {
+        // ignore persistence errors
+    }
+}
+
 $filterKeys = ['account_id', 'start_date', 'end_date', 'q', 'exclude', 'min_amount', 'max_amount', 'status'];
 $hasGetFilters = false;
 foreach ($filterKeys as $key) {
     if (array_key_exists($key, $_GET)) { $hasGetFilters = true; break; }
 }
-
-if (isset($_GET['reset'])) {
-    unset($_SESSION['tx_filters']);
-    header('Location: transactions.php');
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $parsed = budget_extract_filters($_POST);
-    $_SESSION['tx_filters'] = $parsed;
-    $targetPage = max(1, (int)($_POST['page'] ?? 1));
-    $scrollY = (int)($_POST['scroll_y'] ?? 0);
-    $query = ['page' => $targetPage];
-    if ($scrollY > 0) { $query['scroll_y'] = $scrollY; }
-    header('Location: transactions.php?' . http_build_query($query));
-    exit;
-}
-
-if ($hasGetFilters) {
-    $parsed = budget_extract_filters($_GET);
-    $_SESSION['tx_filters'] = $parsed;
-} elseif (!empty($_SESSION['tx_filters'])) {
-    $parsed = $_SESSION['tx_filters'];
-} else {
-    $parsed = ['filters' => [
-        'account_id' => [],
-        'start_date' => '',
-        'end_date' => '',
-        'q' => '',
-        'exclude' => '',
-        'min_amount' => '',
-        'max_amount' => '',
-        'status' => '',
-    ], 'account_filter_active' => false];
-}
-
-$filters = $parsed['filters'] ?? [];
-$hasAccountFilter = (bool)($parsed['account_filter_active'] ?? false);
-$accountIds = $filters['account_id'] ?? [];
 
 function budget_escape_like(string $value): string
 {
@@ -115,6 +148,46 @@ try {
     $defaultOwner = budget_default_owner();
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
     $owner = $currentUser;
+
+    if (isset($_GET['reset'])) {
+        unset($_SESSION['tx_filters']);
+        budget_clear_tx_filters($pdo, $owner);
+        header('Location: transactions.php');
+        exit;
+    }
+
+    $savedFilters = budget_load_tx_filters($pdo, $owner, $filterDefaults);
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $parsed = budget_extract_filters($_POST);
+        $parsed['filters'] = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
+        $_SESSION['tx_filters'] = $parsed;
+        budget_save_tx_filters($pdo, $owner, $parsed['filters'], (bool)($parsed['account_filter_active'] ?? false), $filterDefaults);
+        $targetPage = max(1, (int)($_POST['page'] ?? 1));
+        $scrollY = (int)($_POST['scroll_y'] ?? 0);
+        $query = ['page' => $targetPage];
+        if ($scrollY > 0) { $query['scroll_y'] = $scrollY; }
+        header('Location: transactions.php?' . http_build_query($query));
+        exit;
+    }
+
+    if ($hasGetFilters) {
+        $parsed = budget_extract_filters($_GET);
+        $parsed['filters'] = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
+        $_SESSION['tx_filters'] = $parsed;
+        budget_save_tx_filters($pdo, $owner, $parsed['filters'], (bool)($parsed['account_filter_active'] ?? false), $filterDefaults);
+    } elseif (!empty($_SESSION['tx_filters'])) {
+        $parsed = $_SESSION['tx_filters'];
+    } elseif (!empty($savedFilters)) {
+        $parsed = $savedFilters;
+        $_SESSION['tx_filters'] = $parsed;
+    } else {
+        $parsed = ['filters' => $filterDefaults, 'account_filter_active' => false];
+    }
+
+    $filters = budget_normalize_filters($parsed['filters'] ?? [], $filterDefaults);
+    $hasAccountFilter = (bool)($parsed['account_filter_active'] ?? false);
+    $accountIds = $filters['account_id'] ?? [];
 
     // Accounts for filter dropdown
     $accounts = $pdo->query('SELECT id, name FROM accounts ORDER BY name ASC')->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
