@@ -33,6 +33,8 @@ function budget_extract_filters(array $input): array
         'min_amount' => trim((string)($input['min_amount'] ?? '')),
         'max_amount' => trim((string)($input['max_amount'] ?? '')),
         'status' => ($input['status'] ?? '') !== '' ? (string)($input['status'] ?? '') : '', // '' = all, '0','1','2'
+        'sort' => (string)($input['sort'] ?? ''),
+        'dir' => (string)($input['dir'] ?? ''),
     ];
     $accountFilterActive = array_key_exists('account_id', $input);
     $accountIds = [];
@@ -69,6 +71,8 @@ $filterDefaults = [
     'min_amount' => '',
     'max_amount' => '',
     'status' => '',
+    'sort' => 'date',
+    'dir' => 'desc',
 ];
 
 function budget_normalize_filters(array $filters, array $defaults): array
@@ -83,6 +87,15 @@ function budget_normalize_filters(array $filters, array $defaults): array
         }
     }
     $merged['account_id'] = array_values(array_unique($ids));
+    $allowedSort = ['date', 'account', 'description', 'amount', 'status'];
+    if (!in_array((string)$merged['sort'], $allowedSort, true)) {
+        $merged['sort'] = $defaults['sort'] ?? 'date';
+    }
+    $dir = strtolower((string)($merged['dir'] ?? ''));
+    if (!in_array($dir, ['asc', 'desc'], true)) {
+        $dir = $defaults['dir'] ?? 'desc';
+    }
+    $merged['dir'] = $dir;
     return $merged;
 }
 
@@ -132,7 +145,7 @@ function budget_clear_tx_filters(PDO $pdo, string $username): void
     }
 }
 
-$filterKeys = ['account_id', 'start_date', 'end_date', 'q', 'exclude', 'min_amount', 'max_amount', 'status'];
+$filterKeys = ['account_id', 'start_date', 'end_date', 'q', 'exclude', 'min_amount', 'max_amount', 'status', 'sort', 'dir'];
 $hasGetFilters = false;
 foreach ($filterKeys as $key) {
     if (array_key_exists($key, $_GET)) { $hasGetFilters = true; break; }
@@ -257,13 +270,35 @@ try {
     $countStmt->execute($params);
     $totalRows = (int)$countStmt->fetchColumn();
 
+    $sortCol = (string)($filters['sort'] ?? 'date');
+    $sortDir = (string)($filters['dir'] ?? 'desc');
+    $dirSql = $sortDir === 'asc' ? 'ASC' : 'DESC';
+    switch ($sortCol) {
+        case 'account':
+            $orderBy = "a.name {$dirSql}, t.`date` DESC, t.id DESC";
+            break;
+        case 'description':
+            $orderBy = "t.description {$dirSql}, t.`date` DESC, t.id DESC";
+            break;
+        case 'amount':
+            $orderBy = "t.amount {$dirSql}, t.`date` DESC, t.id DESC";
+            break;
+        case 'status':
+            $orderBy = "COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) {$dirSql}, t.`date` DESC, t.id DESC";
+            break;
+        case 'date':
+        default:
+            $orderBy = "t.`date` {$dirSql}, t.id DESC";
+            break;
+    }
+
     // Page data
     $sql = "SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
                    t.account_id, a.name AS account_name
             FROM transactions t
             LEFT JOIN accounts a ON a.id = t.account_id
             WHERE $whereSql
-            ORDER BY t.`date` DESC, t.id DESC
+            ORDER BY $orderBy
             LIMIT $limit OFFSET $offset";
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -276,8 +311,19 @@ try {
 $totalPages = max(1, (int)ceil($totalRows / $limit));
 $hasPrev = $page > 1;
 $hasNext = $page < $totalPages;
+$currentSort = (string)($filters['sort'] ?? 'date');
+$currentDir = (string)($filters['dir'] ?? 'desc');
 
 function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
+function budget_sort_icon(string $col, string $current, string $dir): string
+{
+    if ($col !== $current) { return ''; }
+    return $dir === 'asc' ? ' &uarr;' : ' &darr;';
+}
+function budget_sort_default_dir(string $col): string
+{
+    return in_array($col, ['date', 'amount'], true) ? 'desc' : 'asc';
+}
 
 ?>
 <!doctype html>
@@ -323,14 +369,26 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
       <form id="txFilterForm" method="post" class="table-responsive" data-page="<?= (int)$page ?>">
         <input type="hidden" name="page" value="<?= (int)$page ?>">
         <input type="hidden" name="scroll_y" value="<?= h((string)($_GET['scroll_y'] ?? '')) ?>">
+        <input type="hidden" name="sort" value="<?= h($currentSort) ?>">
+        <input type="hidden" name="dir" value="<?= h($currentDir) ?>">
         <table class="table table-sm align-middle">
           <thead class="table-light">
             <tr>
-              <th scope="col">Date</th>
-              <th scope="col">Account</th>
-              <th scope="col">Description</th>
-              <th scope="col" class="text-end">Amount</th>
-              <th scope="col" class="text-center">Status</th>
+              <th scope="col">
+                <a href="#" class="text-decoration-none js-sort" data-sort="date" data-default-dir="<?= budget_sort_default_dir('date') ?>">Date<?= budget_sort_icon('date', $currentSort, $currentDir) ?></a>
+              </th>
+              <th scope="col">
+                <a href="#" class="text-decoration-none js-sort" data-sort="account" data-default-dir="<?= budget_sort_default_dir('account') ?>">Account<?= budget_sort_icon('account', $currentSort, $currentDir) ?></a>
+              </th>
+              <th scope="col">
+                <a href="#" class="text-decoration-none js-sort" data-sort="description" data-default-dir="<?= budget_sort_default_dir('description') ?>">Description<?= budget_sort_icon('description', $currentSort, $currentDir) ?></a>
+              </th>
+              <th scope="col" class="text-end">
+                <a href="#" class="text-decoration-none js-sort" data-sort="amount" data-default-dir="<?= budget_sort_default_dir('amount') ?>">Amount<?= budget_sort_icon('amount', $currentSort, $currentDir) ?></a>
+              </th>
+              <th scope="col" class="text-center">
+                <a href="#" class="text-decoration-none js-sort" data-sort="status" data-default-dir="<?= budget_sort_default_dir('status') ?>">Status<?= budget_sort_icon('status', $currentSort, $currentDir) ?></a>
+              </th>
               <th scope="col"></th>
             </tr>
             <tr class="align-middle bg-body">
@@ -438,6 +496,9 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
         const accountSelect = form?.querySelector('select[name="account_id[]"]');
         const selectAllLink = form?.querySelector('.js-select-all-accounts');
         const scrollField = form?.querySelector('[name="scroll_y"]');
+        const sortField = form?.querySelector('[name="sort"]');
+        const dirField = form?.querySelector('[name="dir"]');
+        const pageField = form?.querySelector('[name="page"]');
         if (!form) return;
 
         const normalize = (value) => value.replace(/\s+/g, ' ').trim();
@@ -500,6 +561,25 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
             .sort((a, b) => a.localeCompare(b))
             .join('\n');
           if (scrollField) scrollField.value = String(window.scrollY || 0);
+          form.submit();
+        });
+
+        document.addEventListener('click', (event) => {
+          const sortLink = event.target.closest('.js-sort');
+          if (!sortLink) return;
+          event.preventDefault();
+          if (!sortField || !dirField || !pageField) return;
+          const col = sortLink.dataset.sort || '';
+          if (!col) return;
+          const defaultDir = sortLink.dataset.defaultDir || 'asc';
+          if (sortField.value === col) {
+            dirField.value = dirField.value === 'asc' ? 'desc' : 'asc';
+          } else {
+            sortField.value = col;
+            dirField.value = defaultDir;
+          }
+          pageField.value = '1';
+          if (scrollField) scrollField.value = '0';
           form.submit();
         });
 
