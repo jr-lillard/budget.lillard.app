@@ -221,7 +221,10 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
                     <option value="<?= (int)$id ?>" <?= $selected ? 'selected' : '' ?>><?= h($name) ?></option>
                   <?php endforeach; ?>
                 </select>
-                <div class="form-text small">All accounts selected by default. Deselect to filter.</div>
+                <div class="d-flex gap-2 align-items-center mt-1">
+                  <a href="#" class="small text-decoration-none js-select-all-accounts">Select all</a>
+                  <span class="text-body-secondary small">All accounts selected by default. Deselect to filter.</span>
+                </div>
               </th>
               <th>
                 <div class="d-flex flex-column gap-1">
@@ -300,6 +303,8 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
       (() => {
         const form = document.getElementById('txFilterForm');
         const excludeField = form?.querySelector('[name="exclude"]');
+        const accountSelect = form?.querySelector('select[name="account_id[]"]');
+        const selectAllLink = form?.querySelector('.js-select-all-accounts');
         if (!form || !excludeField) return;
 
         const normalize = (value) => value.replace(/\s+/g, ' ').trim();
@@ -325,6 +330,14 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
           }
           excludeField.value = Array.from(existing).join('\n');
           form.submit();
+        });
+
+        selectAllLink && selectAllLink.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (!accountSelect) return;
+          for (const option of accountSelect.options) {
+            option.selected = true;
+          }
         });
       })();
     </script>
