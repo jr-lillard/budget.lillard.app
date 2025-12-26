@@ -22,35 +22,88 @@ $totalRows = 0;
 $limit = 50;
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $limit;
-$rawAccountFilter = $_GET['account_id'] ?? null;
-$hasAccountFilter = array_key_exists('account_id', $_GET);
-$accountIds = [];
-if (is_array($rawAccountFilter)) {
-    foreach ($rawAccountFilter as $value) {
-        if ($value === '' || $value === null) { continue; }
-        if (is_numeric($value)) {
-            $id = (int)$value;
-            if ($id > 0) { $accountIds[] = $id; }
+function budget_extract_filters(array $input): array
+{
+    $filters = [
+        'account_id' => [],
+        'start_date' => (string)($input['start_date'] ?? ''),
+        'end_date' => (string)($input['end_date'] ?? ''),
+        'q' => trim((string)($input['q'] ?? '')),
+        'exclude' => trim((string)($input['exclude'] ?? '')),
+        'min_amount' => trim((string)($input['min_amount'] ?? '')),
+        'max_amount' => trim((string)($input['max_amount'] ?? '')),
+        'status' => ($input['status'] ?? '') !== '' ? (string)($input['status'] ?? '') : '', // '' = all, '0','1','2'
+    ];
+    $accountFilterActive = array_key_exists('account_id', $input);
+    $accountIds = [];
+    if ($accountFilterActive) {
+        $raw = $input['account_id'] ?? null;
+        if (is_array($raw)) {
+            foreach ($raw as $value) {
+                if ($value === '' || $value === null) { continue; }
+                if (is_numeric($value)) {
+                    $id = (int)$value;
+                    if ($id > 0) { $accountIds[] = $id; }
+                }
+            }
+        } elseif ($raw !== null && $raw !== '') {
+            if (is_numeric($raw)) {
+                $id = (int)$raw;
+                if ($id > 0) { $accountIds[] = $id; }
+            }
         }
     }
-} elseif ($rawAccountFilter !== null && $rawAccountFilter !== '') {
-    if (is_numeric($rawAccountFilter)) {
-        $id = (int)$rawAccountFilter;
-        if ($id > 0) { $accountIds[] = $id; }
-    }
+    $filters['account_id'] = array_values(array_unique($accountIds));
+    return [
+        'filters' => $filters,
+        'account_filter_active' => $accountFilterActive,
+    ];
 }
-$accountIds = array_values(array_unique($accountIds));
 
-$filters = [
-    'account_id' => $accountIds,
-    'start_date' => (string)($_GET['start_date'] ?? ''),
-    'end_date' => (string)($_GET['end_date'] ?? ''),
-    'q' => trim((string)($_GET['q'] ?? '')),
-    'exclude' => trim((string)($_GET['exclude'] ?? '')),
-    'min_amount' => trim((string)($_GET['min_amount'] ?? '')),
-    'max_amount' => trim((string)($_GET['max_amount'] ?? '')),
-    'status' => ($_GET['status'] ?? '') !== '' ? (string)$_GET['status'] : '', // '' = all, '0','1','2'
-];
+$filterKeys = ['account_id', 'start_date', 'end_date', 'q', 'exclude', 'min_amount', 'max_amount', 'status'];
+$hasGetFilters = false;
+foreach ($filterKeys as $key) {
+    if (array_key_exists($key, $_GET)) { $hasGetFilters = true; break; }
+}
+
+if (isset($_GET['reset'])) {
+    unset($_SESSION['tx_filters']);
+    header('Location: transactions.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $parsed = budget_extract_filters($_POST);
+    $_SESSION['tx_filters'] = $parsed;
+    $targetPage = max(1, (int)($_POST['page'] ?? 1));
+    $scrollY = (int)($_POST['scroll_y'] ?? 0);
+    $query = ['page' => $targetPage];
+    if ($scrollY > 0) { $query['scroll_y'] = $scrollY; }
+    header('Location: transactions.php?' . http_build_query($query));
+    exit;
+}
+
+if ($hasGetFilters) {
+    $parsed = budget_extract_filters($_GET);
+    $_SESSION['tx_filters'] = $parsed;
+} elseif (!empty($_SESSION['tx_filters'])) {
+    $parsed = $_SESSION['tx_filters'];
+} else {
+    $parsed = ['filters' => [
+        'account_id' => [],
+        'start_date' => '',
+        'end_date' => '',
+        'q' => '',
+        'exclude' => '',
+        'min_amount' => '',
+        'max_amount' => '',
+        'status' => '',
+    ], 'account_filter_active' => false];
+}
+
+$filters = $parsed['filters'] ?? [];
+$hasAccountFilter = (bool)($parsed['account_filter_active'] ?? false);
+$accountIds = $filters['account_id'] ?? [];
 
 function budget_escape_like(string $value): string
 {
@@ -186,15 +239,15 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
         <div class="text-body-secondary small">Page <?= $page ?> of <?= $totalPages ?> • <?= $totalRows ?> transaction<?= $totalRows === 1 ? '' : 's' ?></div>
         <div class="d-flex align-items-center gap-2">
           <button type="submit" form="txFilterForm" class="btn btn-primary btn-sm">Apply filters</button>
-          <a class="btn btn-outline-secondary btn-sm" href="transactions.php">Reset</a>
+          <a class="btn btn-outline-secondary btn-sm" href="transactions.php?reset=1">Reset</a>
           <div class="btn-group" role="group" aria-label="Pagination">
-            <a class="btn btn-outline-secondary btn-sm<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(array_merge($filters, ['page' => $page - 1]))) : '#' ?>">« Prev</a>
-            <a class="btn btn-outline-secondary btn-sm<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(array_merge($filters, ['page' => $page + 1]))) : '#' ?>">Next »</a>
+            <a class="btn btn-outline-secondary btn-sm<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(['page' => $page - 1])) : '#' ?>">« Prev</a>
+            <a class="btn btn-outline-secondary btn-sm<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(['page' => $page + 1])) : '#' ?>">Next »</a>
           </div>
         </div>
       </div>
 
-      <form id="txFilterForm" method="get" class="table-responsive" data-page="<?= (int)$page ?>">
+      <form id="txFilterForm" method="post" class="table-responsive" data-page="<?= (int)$page ?>">
         <input type="hidden" name="page" value="<?= (int)$page ?>">
         <input type="hidden" name="scroll_y" value="<?= h((string)($_GET['scroll_y'] ?? '')) ?>">
         <table class="table table-sm align-middle">
@@ -299,8 +352,8 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
       <div class="d-flex justify-content-between align-items-center mt-2">
         <div class="text-body-secondary small">Page <?= $page ?> of <?= $totalPages ?></div>
         <div class="btn-group" role="group" aria-label="Pagination">
-          <a class="btn btn-outline-secondary<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(array_merge($filters, ['page' => $page - 1]))) : '#' ?>">« Prev</a>
-          <a class="btn btn-outline-secondary<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(array_merge($filters, ['page' => $page + 1]))) : '#' ?>">Next »</a>
+          <a class="btn btn-outline-secondary<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(['page' => $page - 1])) : '#' ?>">« Prev</a>
+          <a class="btn btn-outline-secondary<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(['page' => $page + 1])) : '#' ?>">Next »</a>
         </div>
       </div>
     </main>
