@@ -194,8 +194,8 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
         </div>
       </div>
 
-      <form id="txFilterForm" method="get" class="table-responsive">
-        <input type="hidden" name="page" value="1">
+      <form id="txFilterForm" method="get" class="table-responsive" data-page="<?= (int)$page ?>">
+        <input type="hidden" name="page" value="<?= (int)$page ?>">
         <input type="hidden" name="scroll_y" value="<?= h((string)($_GET['scroll_y'] ?? '')) ?>">
         <table class="table table-sm align-middle">
           <thead class="table-light">
