@@ -262,6 +262,7 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
               $descRaw = (string)($r['description'] ?? '');
               $descAttr = trim(preg_replace('/\s+/', ' ', $descRaw));
               $descAttrSafe = h($descAttr);
+              $accountId = (int)($r['account_id'] ?? 0);
             ?>
               <tr>
                 <td><?= h((string)$r['date']) ?></td>
@@ -280,6 +281,10 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
                       </li>
                       <li>
                         <a class="dropdown-item tx-exclude-action" href="#" data-mode="contains" data-desc="<?= $descAttrSafe ?>">Exclude descriptions containing this</a>
+                      </li>
+                      <li><hr class="dropdown-divider"></li>
+                      <li>
+                        <a class="dropdown-item tx-account-deselect" href="#" data-account-id="<?= $accountId ?>">Deselect this account</a>
                       </li>
                     </ul>
                   </div>
@@ -329,6 +334,22 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
             existing.add(entry);
           }
           excludeField.value = Array.from(existing).join('\n');
+          form.submit();
+        });
+
+        document.addEventListener('click', (event) => {
+          const action = event.target.closest('.tx-account-deselect');
+          if (!action) return;
+          event.preventDefault();
+          if (!accountSelect) return;
+          const id = action.dataset.accountId;
+          if (!id) return;
+          for (const option of accountSelect.options) {
+            if (option.value === id) {
+              option.selected = false;
+              break;
+            }
+          }
           form.submit();
         });
 
