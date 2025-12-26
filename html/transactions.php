@@ -134,6 +134,7 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= h($pageTitle) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
   </head>
   <body>
     <nav class="navbar bg-body-tertiary sticky-top">
@@ -176,6 +177,7 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
               <th scope="col">Description</th>
               <th scope="col" class="text-end">Amount</th>
               <th scope="col" class="text-center">Status</th>
+              <th scope="col"></th>
             </tr>
             <tr class="align-middle bg-body">
               <th>
@@ -213,24 +215,43 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
                   <option value="2" <?= $filters['status'] === '2' ? 'selected' : '' ?>>Posted</option>
                 </select>
               </th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             <?php if (empty($rows)): ?>
-              <tr><td colspan="5" class="text-center text-body-secondary py-4">No transactions found.</td></tr>
+              <tr><td colspan="6" class="text-center text-body-secondary py-4">No transactions found.</td></tr>
             <?php else: foreach ($rows as $r):
               $amt = $r['amount'];
               $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
               $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : h((string)$amt);
               $statusVal = (int)($r['status'] ?? ($r['posted'] ? 2 : 1));
               $statusLabel = ['Scheduled', 'Pending', 'Posted'][$statusVal] ?? 'Pending';
+              $descRaw = (string)($r['description'] ?? '');
+              $descAttr = trim(preg_replace('/\s+/', ' ', $descRaw));
+              $descAttrSafe = h($descAttr);
             ?>
               <tr>
                 <td><?= h((string)$r['date']) ?></td>
                 <td><?= h((string)($r['account_name'] ?? '')) ?></td>
-                <td><?= h((string)$r['description']) ?></td>
+                <td><?= h($descRaw) ?></td>
                 <td class="text-end <?= $amtClass ?>">$<?= $amtFmt ?></td>
                 <td class="text-center"><?= h($statusLabel) ?></td>
+                <td class="text-end">
+                  <div class="dropdown">
+                    <button class="btn btn-sm border-0 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Row actions" <?= $descAttr === '' ? 'disabled' : '' ?>>
+                      <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                      <li>
+                        <a class="dropdown-item tx-exclude-action" href="#" data-mode="exact" data-desc="<?= $descAttrSafe ?>">Exclude exact description</a>
+                      </li>
+                      <li>
+                        <a class="dropdown-item tx-exclude-action" href="#" data-mode="contains" data-desc="<?= $descAttrSafe ?>">Exclude descriptions containing this</a>
+                      </li>
+                    </ul>
+                  </div>
+                </td>
               </tr>
             <?php endforeach; endif; ?>
           </tbody>
@@ -245,5 +266,38 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
         </div>
       </div>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script>
+      (() => {
+        const form = document.getElementById('txFilterForm');
+        const excludeField = form?.querySelector('[name="exclude"]');
+        if (!form || !excludeField) return;
+
+        const normalize = (value) => value.replace(/\s+/g, ' ').trim();
+
+        document.addEventListener('click', (event) => {
+          const action = event.target.closest('.tx-exclude-action');
+          if (!action) return;
+          event.preventDefault();
+          const raw = action.dataset.desc || '';
+          const desc = normalize(raw);
+          if (!desc) return;
+          const mode = action.dataset.mode === 'exact' ? 'exact' : 'contains';
+          const entry = mode === 'exact' ? `=${desc}` : desc;
+
+          const existing = new Set(
+            excludeField.value
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean)
+          );
+          if (!existing.has(entry)) {
+            existing.add(entry);
+          }
+          excludeField.value = Array.from(existing).join('\n');
+          form.submit();
+        });
+      })();
+    </script>
   </body>
 </html>
