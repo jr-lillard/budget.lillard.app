@@ -272,15 +272,15 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
                 <td class="text-center"><?= h($statusLabel) ?></td>
                 <td class="text-end">
                   <div class="dropdown">
-                    <button class="btn btn-sm border-0 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Row actions" <?= $descAttr === '' ? 'disabled' : '' ?>>
+                    <button class="btn btn-sm border-0 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Row actions">
                       <i class="bi bi-three-dots-vertical"></i>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
                       <li>
-                        <a class="dropdown-item tx-exclude-action" href="#" data-mode="exact" data-desc="<?= $descAttrSafe ?>">Exclude exact description</a>
+                        <a class="dropdown-item tx-exclude-action<?= $descAttr === '' ? ' disabled' : '' ?>" href="#" data-mode="exact" data-desc="<?= $descAttrSafe ?>" <?= $descAttr === '' ? 'aria-disabled="true"' : '' ?>>Exclude exact description</a>
                       </li>
                       <li>
-                        <a class="dropdown-item tx-exclude-action" href="#" data-mode="contains" data-desc="<?= $descAttrSafe ?>">Exclude descriptions containing this</a>
+                        <a class="dropdown-item tx-exclude-action<?= $descAttr === '' ? ' disabled' : '' ?>" href="#" data-mode="contains" data-desc="<?= $descAttrSafe ?>" <?= $descAttr === '' ? 'aria-disabled="true"' : '' ?>>Exclude descriptions containing this</a>
                       </li>
                       <li><hr class="dropdown-divider"></li>
                       <li>
