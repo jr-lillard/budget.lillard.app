@@ -496,7 +496,9 @@ function h(?string $v): string { return htmlspecialchars((string)$v, ENT_QUOTES,
           if (!existing.has(entry)) {
             existing.add(entry);
           }
-          excludeField.value = Array.from(existing).join('\n');
+          excludeField.value = Array.from(existing)
+            .sort((a, b) => a.localeCompare(b))
+            .join('\n');
           if (scrollField) scrollField.value = String(window.scrollY || 0);
           form.submit();
         });
