@@ -510,7 +510,7 @@ function budget_sort_default_dir(string $col): string
         <div class="d-flex align-items-center gap-2">
           <button type="submit" form="txFilterForm" class="btn btn-primary btn-sm">Apply filters</button>
           <a class="btn btn-outline-secondary btn-sm" href="transactions.php?reset=1">Reset</a>
-          <a class="btn btn-outline-success btn-sm" href="transactions_export.php">Export CSV</a>
+          <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#txExportModal">Export CSV</button>
           <div class="btn-group" role="group" aria-label="Pagination">
             <a class="btn btn-outline-secondary btn-sm<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(['page' => $page - 1])) : '#' ?>">« Prev</a>
             <a class="btn btn-outline-secondary btn-sm<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(['page' => $page + 1])) : '#' ?>">Next »</a>
@@ -646,6 +646,46 @@ function budget_sort_default_dir(string $col): string
         <div class="btn-group" role="group" aria-label="Pagination">
           <a class="btn btn-outline-secondary<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(['page' => $page - 1])) : '#' ?>">« Prev</a>
           <a class="btn btn-outline-secondary<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(['page' => $page + 1])) : '#' ?>">Next »</a>
+        </div>
+      </div>
+
+      <div class="modal fade" id="txExportModal" tabindex="-1" aria-labelledby="txExportModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <form method="post" action="transactions_export.php" target="_blank">
+              <div class="modal-header">
+                <h5 class="modal-title" id="txExportModalLabel">Export CSV</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="columns[]" value="date" id="export-col-date" checked>
+                  <label class="form-check-label" for="export-col-date">Date</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="columns[]" value="account" id="export-col-account" checked>
+                  <label class="form-check-label" for="export-col-account">Account</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="columns[]" value="description" id="export-col-description" checked>
+                  <label class="form-check-label" for="export-col-description">Description</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="columns[]" value="amount" id="export-col-amount" checked>
+                  <label class="form-check-label" for="export-col-amount">Amount</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="columns[]" value="status" id="export-col-status" checked>
+                  <label class="form-check-label" for="export-col-status">Status</label>
+                </div>
+                <div class="form-text small mt-2">Exports all filtered rows using your current filter settings.</div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-success">Download CSV</button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </main>

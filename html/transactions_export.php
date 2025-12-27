@@ -29,6 +29,22 @@ $filterDefaults = [
     'dir' => 'desc',
 ];
 
+$allowedColumns = [
+    'date' => 'Date',
+    'account' => 'Account',
+    'description' => 'Description',
+    'amount' => 'Amount',
+    'status' => 'Status',
+];
+$selectedColumns = $_POST['columns'] ?? ($_GET['columns'] ?? []);
+if (!is_array($selectedColumns)) {
+    $selectedColumns = [];
+}
+$selectedColumns = array_values(array_intersect($selectedColumns, array_keys($allowedColumns)));
+if (empty($selectedColumns)) {
+    $selectedColumns = array_keys($allowedColumns);
+}
+
 function budget_escape_like(string $value): string
 {
     return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
@@ -204,19 +220,37 @@ try {
     header('Pragma: no-cache');
     header('Expires: 0');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['Date', 'Account', 'Description', 'Amount', 'Status']);
+    $header = [];
+    foreach ($selectedColumns as $column) {
+        $header[] = $allowedColumns[$column];
+    }
+    fputcsv($out, $header);
     while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $amt = $row['amount'];
-        $amtValue = is_numeric($amt) ? number_format((float)$amt, 2) : (string)$amt;
         $statusVal = (int)($row['status'] ?? ($row['posted'] ? 2 : 1));
         $statusLabel = ['Scheduled', 'Pending', 'Posted'][$statusVal] ?? 'Pending';
-        fputcsv($out, [
-            (string)($row['date'] ?? ''),
-            (string)($row['account_name'] ?? ''),
-            (string)($row['description'] ?? ''),
-            $amtValue,
-            $statusLabel,
-        ]);
+        $amtValue = is_numeric($amt) ? number_format((float)$amt, 2) : (string)$amt;
+        $line = [];
+        foreach ($selectedColumns as $column) {
+            switch ($column) {
+                case 'date':
+                    $line[] = (string)($row['date'] ?? '');
+                    break;
+                case 'account':
+                    $line[] = (string)($row['account_name'] ?? '');
+                    break;
+                case 'description':
+                    $line[] = (string)($row['description'] ?? '');
+                    break;
+                case 'amount':
+                    $line[] = $amtValue;
+                    break;
+                case 'status':
+                    $line[] = $statusLabel;
+                    break;
+            }
+        }
+        fputcsv($out, $line);
     }
     fclose($out);
 } catch (Throwable $e) {
