@@ -64,6 +64,16 @@ function budget_normalize_filters(array $filters, array $defaults): array
     unset($merged['account_id']);
     $merged['account_q'] = trim((string)($merged['account_q'] ?? ''));
     $merged['account_exclude'] = trim((string)($merged['account_exclude'] ?? ''));
+    $merged['exclude'] = trim((string)($merged['exclude'] ?? ''));
+    $normalizeMultiline = static function (string $value): string {
+        $value = str_replace(["\r\n", "\r"], "\n", $value);
+        if (strpos($value, '\\') !== false) {
+            $value = str_replace(['\\r\\n', '\\n', '\\r'], "\n", $value);
+        }
+        return $value;
+    };
+    $merged['account_exclude'] = $normalizeMultiline($merged['account_exclude']);
+    $merged['exclude'] = $normalizeMultiline($merged['exclude']);
     $allowedSort = ['date', 'account', 'description', 'amount', 'status'];
     if (!in_array((string)$merged['sort'], $allowedSort, true)) {
         $merged['sort'] = $defaults['sort'] ?? 'date';
