@@ -477,6 +477,7 @@ function budget_sort_default_dir(string $col): string
         <div class="d-flex align-items-center gap-2">
           <button type="submit" form="txFilterForm" class="btn btn-primary btn-sm">Apply filters</button>
           <a class="btn btn-outline-secondary btn-sm" href="transactions.php?reset=1">Reset</a>
+          <a class="btn btn-outline-success btn-sm" href="transactions_export.php">Export CSV</a>
           <div class="btn-group" role="group" aria-label="Pagination">
             <a class="btn btn-outline-secondary btn-sm<?= $hasPrev ? '' : ' disabled' ?>" href="<?= $hasPrev ? h('transactions.php?' . http_build_query(['page' => $page - 1])) : '#' ?>">« Prev</a>
             <a class="btn btn-outline-secondary btn-sm<?= $hasNext ? '' : ' disabled' ?>" href="<?= $hasNext ? h('transactions.php?' . http_build_query(['page' => $page + 1])) : '#' ?>">Next »</a>
