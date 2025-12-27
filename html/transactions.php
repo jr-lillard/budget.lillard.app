@@ -179,6 +179,27 @@ function budget_save_named_filter(PDO $pdo, string $username, string $name, arra
     }
 }
 
+function budget_update_saved_filter(PDO $pdo, string $username, string $name, array $filters, array $defaults): bool
+{
+    $name = trim($name);
+    if ($name === '') { return false; }
+    $payload = budget_normalize_filters($filters, $defaults);
+    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) { return false; }
+    try {
+        $stmt = $pdo->prepare('SELECT 1 FROM user_saved_filters WHERE username = ? AND name = ?');
+        $stmt->execute([$username, $name]);
+        if (!$stmt->fetchColumn()) {
+            return false;
+        }
+        $upd = $pdo->prepare('UPDATE user_saved_filters SET filters = ? WHERE username = ? AND name = ?');
+        $upd->execute([$json, $username, $name]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 function budget_delete_saved_filter(PDO $pdo, string $username, string $name): bool
 {
     try {
@@ -301,6 +322,18 @@ try {
                 $_SESSION['tx_filter_flash'] = $saved
                     ? ['type' => 'success', 'message' => 'Saved filter: ' . $name]
                     : ['type' => 'danger', 'message' => 'A saved filter with that name already exists.'];
+            }
+        }
+
+        if ($action === 'update') {
+            $name = trim((string)($_POST['saved_select'] ?? ''));
+            if ($name === '') {
+                $_SESSION['tx_filter_flash'] = ['type' => 'warning', 'message' => 'Choose a saved filter to update.'];
+            } else {
+                $updated = budget_update_saved_filter($pdo, $owner, $name, $parsed['filters'], $filterDefaults);
+                $_SESSION['tx_filter_flash'] = $updated
+                    ? ['type' => 'success', 'message' => 'Updated saved filter: ' . $name]
+                    : ['type' => 'danger', 'message' => 'Saved filter not found.'];
             }
         }
 
@@ -494,6 +527,7 @@ function budget_sort_default_dir(string $col): string
           <?php endforeach; ?>
         </select>
         <button type="submit" form="txFilterForm" class="btn btn-outline-secondary btn-sm" name="saved_action" value="load">Load</button>
+        <button type="submit" form="txFilterForm" class="btn btn-outline-success btn-sm" name="saved_action" value="update">Update</button>
         <button type="submit" form="txFilterForm" class="btn btn-outline-danger btn-sm" name="saved_action" value="delete">Delete</button>
       </div>
 
