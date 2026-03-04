@@ -30,6 +30,7 @@ try {
     budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
     // Ensure legacy fm_pk is nullable so we can stop using it
     try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
+    $mode = strtolower(trim((string)($_POST['mode'] ?? 'transaction')));
     $id = (int)($_POST['id'] ?? 0);
     // New vs update
     $isInsert = ($id <= 0);
@@ -46,7 +47,95 @@ try {
     $accountSelect = trim((string)($_POST['account_select'] ?? ''));
     $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
     $accountKeep = (int)($_POST['account_keep'] ?? 0);
-    $accountName = $accountSelect === '__new__' ? $accountNew : ($accountSelect ?: $accountNew);
+
+    $normalizeStatus = static function ($rawStatus, int $postedFallback): int {
+        $statusVal = null;
+        if ($rawStatus !== null && $rawStatus !== '') {
+            $map = [
+                'scheduled' => 0,
+                'pending' => 1,
+                'posted' => 2,
+            ];
+            if (is_string($rawStatus) && isset($map[strtolower($rawStatus)])) {
+                $statusVal = $map[strtolower((string)$rawStatus)];
+            } else {
+                $statusVal = (int)$rawStatus;
+            }
+            if ($statusVal < 0 || $statusVal > 2) { $statusVal = 1; }
+        } else {
+            // Fallback from posted checkbox
+            $statusVal = $postedFallback === 1 ? 2 : 1;
+        }
+        return $statusVal;
+    };
+
+    if ($mode === 'transfer') {
+        $fromAccountId = (int)($_POST['from_account_id'] ?? 0);
+        $toAccountId = (int)($_POST['to_account_id'] ?? 0);
+
+        if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            throw new RuntimeException('Transfer date must be YYYY-MM-DD');
+        }
+        if ($amount === '' || !preg_match('/^-?\d+(?:\.\d{1,2})?$/', $amount)) {
+            throw new RuntimeException('Transfer amount format invalid');
+        }
+        $absAmount = round(abs((float)$amount), 2);
+        if ($absAmount <= 0.0) {
+            throw new RuntimeException('Transfer amount must be greater than zero');
+        }
+        if ($fromAccountId <= 0 || $toAccountId <= 0) {
+            throw new RuntimeException('Select both source and target accounts');
+        }
+        if ($fromAccountId === $toAccountId) {
+            throw new RuntimeException('Source and target accounts must be different');
+        }
+
+        $accountsStmt = $pdo->prepare('SELECT id, name FROM accounts WHERE id IN (?, ?)');
+        $accountsStmt->execute([$fromAccountId, $toAccountId]);
+        $accountRows = $accountsStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+        $fromAccountName = isset($accountRows[$fromAccountId]) ? trim((string)$accountRows[$fromAccountId]) : '';
+        $toAccountName = isset($accountRows[$toAccountId]) ? trim((string)$accountRows[$toAccountId]) : '';
+        if ($fromAccountName === '' || $toAccountName === '') {
+            throw new RuntimeException('Unable to resolve selected account names');
+        }
+
+        $statusVal = $normalizeStatus($rawStatus, $postedInt);
+        $postedInt = ($statusVal === 2) ? 1 : 0;
+
+        $insert = $pdo->prepare(
+            'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
+             VALUES (:account_id, :date, :amount, :description, :check_no, :posted, :status, :owner, NOW(), NOW())'
+        );
+
+        $pdo->beginTransaction();
+        $insert->execute([
+            ':account_id' => $fromAccountId,
+            ':date' => $date,
+            ':amount' => -$absAmount,
+            ':description' => $toAccountName,
+            ':check_no' => null,
+            ':posted' => $postedInt,
+            ':status' => $statusVal,
+            ':owner' => $owner,
+        ]);
+        $fromTxId = (int)$pdo->lastInsertId();
+
+        $insert->execute([
+            ':account_id' => $toAccountId,
+            ':date' => $date,
+            ':amount' => $absAmount,
+            ':description' => $fromAccountName,
+            ':check_no' => null,
+            ':posted' => $postedInt,
+            ':status' => $statusVal,
+            ':owner' => $owner,
+        ]);
+        $toTxId = (int)$pdo->lastInsertId();
+        $pdo->commit();
+
+        echo json_encode(['ok' => true, 'mode' => 'transfer', 'ids' => [$fromTxId, $toTxId]]);
+        return;
+    }
 
     if ($date !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         throw new RuntimeException('Date must be YYYY-MM-DD');
@@ -72,23 +161,7 @@ try {
     }
 
     // Normalize status value: 0=scheduled, 1=pending, 2=posted
-    $statusVal = null;
-    if ($rawStatus !== null && $rawStatus !== '') {
-        $map = [
-            'scheduled' => 0,
-            'pending' => 1,
-            'posted' => 2,
-        ];
-        if (is_string($rawStatus) && isset($map[strtolower($rawStatus)])) {
-            $statusVal = $map[strtolower((string)$rawStatus)];
-        } else {
-            $statusVal = (int)$rawStatus;
-        }
-        if ($statusVal < 0 || $statusVal > 2) { $statusVal = 1; }
-    } else {
-        // Fallback from posted checkbox
-        $statusVal = $postedInt === 1 ? 2 : 1;
-    }
+    $statusVal = $normalizeStatus($rawStatus, $postedInt);
     // Keep legacy posted column in sync with 3-state status
     $postedInt = ($statusVal === 2) ? 1 : 0;
 
@@ -131,6 +204,9 @@ try {
         echo json_encode(['ok' => true, 'id' => $id]);
     }
 } catch (Throwable $e) {
+    if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }

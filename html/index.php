@@ -511,6 +511,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 data-account-name="<?= (isset($filterAccountId) && $filterAccountId > 0 && isset($accPairs[$filterAccountId])) ? htmlspecialchars((string)$accPairs[$filterAccountId]) : '' ?>">
                 + Add Transaction
               </button>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="transferBtn"
+                data-account-id="<?= (int)($filterAccountId ?? 0) ?>">
+                Transfer
+              </button>
               <a class="btn btn-sm btn-outline-secondary" href="reminders.php<?= ($filterAccountId>0? ('?account_id='.(int)$filterAccountId) : '') ?>">Reminders</a>
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
               <a class="btn btn-sm btn-outline-secondary" href="transactions.php">All transactions</a>
@@ -891,6 +895,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           </form>
         </div>
       </div>
+      <!-- Transfer Modal -->
+      <div class="modal fade" id="transferModal" tabindex="-1" aria-hidden="true" aria-labelledby="transferLabel">
+        <div class="modal-dialog">
+          <form class="modal-content" id="transferForm">
+            <div class="modal-header">
+              <h5 class="modal-title" id="transferLabel">Transfer Funds</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <input type="hidden" name="mode" value="transfer">
+              <div class="row g-2 mb-2">
+                <div class="col-6">
+                  <label class="form-label">Date</label>
+                  <input type="date" class="form-control" name="date" id="transferDate" required>
+                </div>
+                <div class="col-6">
+                  <label class="form-label">Amount</label>
+                  <input type="text" class="form-control" name="amount" id="transferAmount" placeholder="0.00" required>
+                </div>
+              </div>
+              <div class="mb-2">
+                <label class="form-label">From Account</label>
+                <select class="form-select" name="from_account_id" id="transferFromAccount" required>
+                  <option value="">Select source account…</option>
+                  <?php if (!empty($accPairs)) foreach ($accPairs as $aid => $aname): ?>
+                    <option value="<?= (int)$aid ?>"><?= htmlspecialchars((string)$aname) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="mb-2">
+                <label class="form-label">To Account</label>
+                <select class="form-select" name="to_account_id" id="transferToAccount" required>
+                  <option value="">Select target account…</option>
+                  <?php if (!empty($accPairs)) foreach ($accPairs as $aid => $aname): ?>
+                    <option value="<?= (int)$aid ?>"><?= htmlspecialchars((string)$aname) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="mb-2">
+                <label class="form-label">Status</label>
+                <select class="form-select" name="status" id="transferStatus">
+                  <option value="0">Scheduled</option>
+                  <option value="1" selected>Pending</option>
+                  <option value="2">Posted</option>
+                </select>
+              </div>
+              <div class="form-text">Creates two transactions: negative on source with target name, and positive on target with source name.</div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Transfer</button>
+            </div>
+          </form>
+        </div>
+      </div>
       <div class="modal fade" id="apiErrorModal" tabindex="-1" aria-hidden="true" aria-labelledby="apiErrorModalLabel">
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
           <div class="modal-content">
@@ -918,8 +977,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const modalEl = document.getElementById('editTxModal');
         const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
         const form = document.getElementById('editTxForm');
+        const transferModalEl = document.getElementById('transferModal');
+        const transferModal = transferModalEl ? new bootstrap.Modal(transferModalEl) : null;
+        const transferForm = document.getElementById('transferForm');
         const g = (id) => document.getElementById(id);
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
+        const todayIso = () => {
+          const now = new Date();
+          const yyyy = now.getFullYear();
+          const mm = String(now.getMonth() + 1).padStart(2, '0');
+          const dd = String(now.getDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        };
         function openEditFromRow(row){
           if (!row) return;
           setv('txId', row.dataset.id || '');
@@ -980,11 +1049,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           e.preventDefault();
           // reset form
           setv('txId','');
-          const today = new Date();
-          const yyyy = today.getFullYear();
-          const mm = String(today.getMonth()+1).padStart(2,'0');
-          const dd = String(today.getDate()).padStart(2,'0');
-          setv('txDate', `${yyyy}-${mm}-${dd}`);
+          setv('txDate', todayIso());
           setv('txAmount','');
           // Set account to current filter if present
           const acctName = addBtn.dataset.accountName || '';
@@ -1001,6 +1066,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txCheck','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
           modal && modal.show();
+        });
+        const transferBtn = document.getElementById('transferBtn');
+        transferBtn && transferBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          setv('transferDate', todayIso());
+          setv('transferAmount', '');
+          const fromSel = g('transferFromAccount');
+          const toSel = g('transferToAccount');
+          const statusSel = g('transferStatus');
+          if (statusSel) statusSel.value = '1';
+          const preferred = transferBtn.dataset.accountId || '';
+          if (fromSel) {
+            if (preferred && Array.from(fromSel.options).some((opt) => opt.value === preferred)) {
+              fromSel.value = preferred;
+            } else {
+              fromSel.value = '';
+            }
+          }
+          if (toSel) {
+            toSel.value = '';
+            if (fromSel && fromSel.value !== '') {
+              const firstDifferent = Array.from(toSel.options).find((opt) => opt.value !== '' && opt.value !== fromSel.value);
+              if (firstDifferent) toSel.value = firstDifferent.value;
+            }
+          }
+          transferModal && transferModal.show();
         });
         // Toggle new account input visibility on select change
         const sel = g('txAccountSelect');
@@ -1023,11 +1114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (dateOverride) {
             setv('txDate', dateOverride);
           } else {
-            const today = new Date();
-            const yyyy = today.getFullYear();
-            const mm = String(today.getMonth()+1).padStart(2,'0');
-            const dd = String(today.getDate()).padStart(2,'0');
-            setv('txDate', `${yyyy}-${mm}-${dd}`);
+            setv('txDate', todayIso());
           }
           setv('txAmount','');
           // Set account to current filter if present (from main Add button's dataset)
@@ -1055,6 +1142,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (!res.ok) return; // api_error.js will show modal
           try { await res.json(); } catch {}
           modal && modal.hide();
+          window.location.reload();
+        });
+        transferForm && transferForm.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          const fromId = g('transferFromAccount')?.value || '';
+          const toId = g('transferToAccount')?.value || '';
+          if (!fromId || !toId) {
+            window.alert('Select both source and target accounts.');
+            return;
+          }
+          if (fromId === toId) {
+            window.alert('Source and target accounts must be different.');
+            return;
+          }
+          const fd = new FormData(transferForm);
+          const res = await fetch('transaction_save.php', { method: 'POST', body: fd });
+          if (!res.ok) return; // api_error.js will show modal
+          try { await res.json(); } catch {}
+          transferModal && transferModal.hide();
           window.location.reload();
         });
 
