@@ -527,11 +527,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <option value="<?= (int)$aid ?>" <?= (isset($filterAccountId) && (int)$filterAccountId === (int)$aid) ? 'selected' : '' ?>><?= htmlspecialchars((string)$aname) ?></option>
                 <?php endforeach; ?>
               </select>
-              <button type="submit" class="btn btn-sm btn-primary">Filter</button>
-              <?php if ((int)$filterAccountId > 0): ?>
-                <!-- Clear by explicitly submitting an empty account_id to reset the session value -->
-                <a class="btn btn-sm btn-outline-secondary" href="index.php?account_id=">Clear</a>
-              <?php endif; ?>
             </form>
           </div>
           <?php
