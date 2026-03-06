@@ -519,7 +519,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
               <a class="btn btn-sm btn-outline-secondary" href="transactions.php">All transactions</a>
             </div>
-            <form class="d-flex align-items-center gap-2" method="get" action="">
+            <form class="d-flex align-items-center gap-2" method="get" action="" id="dashboardFilterForm">
               <label for="filterAccount" class="form-label mb-0">Account</label>
               <select id="filterAccount" name="account_id" class="form-select form-select-sm" style="min-width: 240px;">
                 <option value="">All accounts</option>
@@ -982,6 +982,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const transferForm = document.getElementById('transferForm');
         const g = (id) => document.getElementById(id);
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
+        const dashboardFilterForm = document.getElementById('dashboardFilterForm');
+        const dashboardFilterSelect = document.getElementById('filterAccount');
         const todayIso = () => {
           const now = new Date();
           const yyyy = now.getFullYear();
@@ -1092,6 +1094,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             }
           }
           transferModal && transferModal.show();
+        });
+        dashboardFilterSelect && dashboardFilterForm && dashboardFilterSelect.addEventListener('change', () => {
+          if (typeof dashboardFilterForm.requestSubmit === 'function') {
+            dashboardFilterForm.requestSubmit();
+          } else {
+            dashboardFilterForm.submit();
+          }
         });
         // Toggle new account input visibility on select change
         const sel = g('txAccountSelect');
