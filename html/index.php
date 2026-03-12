@@ -1014,10 +1014,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const txAccountSuggestions = g('txAccountSuggestions');
         const txDescriptionInput = g('txDescription');
         const txDescriptionSuggestions = g('txDescriptionSuggestions');
-        const hideSuggestions = (panel) => {
+        const hideSuggestions = (panel, state = null) => {
           if (!panel) return;
           panel.classList.add('d-none');
           panel.textContent = '';
+          if (state) {
+            state.matches = [];
+            state.activeIndex = -1;
+          }
+        };
+        const syncSuggestionHighlight = (panel, activeIndex) => {
+          if (!panel) return;
+          const buttons = panel.querySelectorAll('button[data-suggestion-index]');
+          buttons.forEach((button, index) => {
+            const isActive = index === activeIndex;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            if (isActive) {
+              button.scrollIntoView({ block: 'nearest' });
+            }
+          });
         };
         const findSuggestionMatches = (options, query) => {
           const trimmed = (query || '').trim();
@@ -1036,39 +1052,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           });
           return [...exact, ...starts, ...contains].slice(0, 8);
         };
-        const renderSuggestions = (panel, matches, onPick) => {
+        const renderSuggestions = (panel, state, onPick) => {
           if (!panel) return;
           panel.textContent = '';
-          if (!matches.length) {
+          if (!state.matches.length) {
             panel.classList.add('d-none');
             return;
           }
-          matches.forEach((match) => {
+          state.matches.forEach((match, index) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'list-group-item list-group-item-action py-2 px-3';
             button.textContent = match;
+            button.dataset.suggestionIndex = String(index);
+            button.setAttribute('aria-selected', 'false');
+            button.addEventListener('mouseenter', () => {
+              state.activeIndex = index;
+              syncSuggestionHighlight(panel, state.activeIndex);
+            });
             button.addEventListener('pointerdown', (event) => {
               event.preventDefault();
+              state.activeIndex = index;
               onPick(match);
-              hideSuggestions(panel);
+              hideSuggestions(panel, state);
             });
             panel.append(button);
           });
           panel.classList.remove('d-none');
+          syncSuggestionHighlight(panel, state.activeIndex);
         };
         const attachSuggestionInput = ({ input, panel, options, onPick }) => {
           if (!input || !panel) return;
+          const state = { matches: [], activeIndex: -1 };
+          const chooseActive = () => {
+            const targetIndex = state.activeIndex >= 0 ? state.activeIndex : -1;
+            if (targetIndex < 0 || targetIndex >= state.matches.length) return false;
+            onPick(state.matches[targetIndex]);
+            hideSuggestions(panel, state);
+            return true;
+          };
           const update = () => {
-            renderSuggestions(panel, findSuggestionMatches(options, input.value || ''), onPick);
+            state.matches = findSuggestionMatches(options, input.value || '');
+            state.activeIndex = -1;
+            renderSuggestions(panel, state, onPick);
           };
           input.addEventListener('focus', update);
           input.addEventListener('input', update);
           input.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') hideSuggestions(panel);
+            if (event.key === 'ArrowDown' && state.matches.length) {
+              event.preventDefault();
+              state.activeIndex = Math.min(state.activeIndex + 1, state.matches.length - 1);
+              syncSuggestionHighlight(panel, state.activeIndex);
+              return;
+            }
+            if (event.key === 'ArrowUp' && state.matches.length) {
+              event.preventDefault();
+              state.activeIndex = state.activeIndex <= 0 ? state.matches.length - 1 : state.activeIndex - 1;
+              syncSuggestionHighlight(panel, state.activeIndex);
+              return;
+            }
+            if (event.key === 'Enter' && state.matches.length) {
+              if (state.activeIndex < 0) state.activeIndex = 0;
+              event.preventDefault();
+              chooseActive();
+              return;
+            }
+            if (event.key === 'Tab' && state.activeIndex >= 0 && state.matches.length) {
+              chooseActive();
+              return;
+            }
+            if (event.key === 'Escape') hideSuggestions(panel, state);
           });
           input.addEventListener('blur', () => {
-            window.setTimeout(() => hideSuggestions(panel), 120);
+            window.setTimeout(() => hideSuggestions(panel, state), 120);
           });
         };
         const syncAccountFields = () => {
