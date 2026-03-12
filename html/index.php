@@ -268,6 +268,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       .combo-suggestions button:focus-visible {
         background: var(--bs-tertiary-bg);
       }
+      .combo-suggestions button.active,
+      .combo-suggestions button.active:hover,
+      .combo-suggestions button.active:focus-visible {
+        background: var(--bs-primary);
+        color: #fff;
+      }
     </style>
   </head>
   <body>
