@@ -28,6 +28,9 @@ $loggedIn = $sessionUser !== '';
 $currentUser = $sessionUser;
 $recentTx = [];
 $recentError = '';
+$accPairs = [];
+$accounts = [];
+$descriptions = [];
 $accountActivity = [];
 $activityMonths = '0';
 $hideClients = '0';
@@ -241,6 +244,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         border: 0 !important;
         padding-top: 1rem;
         padding-bottom: 1rem;
+      }
+      .combo-suggestions {
+        position: absolute;
+        top: calc(100% + 0.25rem);
+        left: 0;
+        right: 0;
+        z-index: 1065;
+        max-height: 14rem;
+        overflow-y: auto;
+        border: 1px solid rgba(0, 0, 0, 0.125);
+        border-radius: 0.5rem;
+        background: var(--bs-body-bg);
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+      }
+      .combo-suggestions button {
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        text-align: left;
+      }
+      .combo-suggestions button:hover,
+      .combo-suggestions button:focus-visible {
+        background: var(--bs-tertiary-bg);
       }
     </style>
   </head>
@@ -849,24 +875,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <input type="text" class="form-control" name="amount" id="txAmount" placeholder="0.00">
                 </div>
               </div>
-              <div class="mb-2">
+              <div class="mb-2 position-relative">
                 <label class="form-label">Account</label>
-                <select class="form-select" name="account_select" id="txAccountSelect">
-                  <?php if (!empty($accounts)) foreach ($accounts as $a): ?>
-                    <option value="<?= htmlspecialchars((string)$a) ?>"><?= htmlspecialchars((string)$a) ?></option>
-                  <?php endforeach; ?>
-                  <option value="__new__">Add new account…</option>
-                </select>
-                <input type="text" class="form-control mt-2 d-none" name="account_name_new" id="txAccountNew" placeholder="New account name">
+                <input type="hidden" name="account_select" id="txAccountSelect">
+                <input type="hidden" name="account_name_new" id="txAccountNew">
+                <input type="text" class="form-control" id="txAccountInput" placeholder="Start typing an account" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false">
+                <div class="combo-suggestions d-none" id="txAccountSuggestions"></div>
               </div>
-              <div class="mb-2">
+              <div class="mb-2 position-relative">
                 <label class="form-label">Description</label>
-                <input type="text" class="form-control" name="description" id="txDescription" list="descriptionsList" autocomplete="off">
-                <datalist id="descriptionsList">
-                  <?php if (!empty($descriptions)) foreach ($descriptions as $d): ?>
-                    <option value="<?= htmlspecialchars((string)$d) ?>"></option>
-                  <?php endforeach; ?>
-                </datalist>
+                <input type="text" class="form-control" name="description" id="txDescription" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false">
+                <div class="combo-suggestions d-none" id="txDescriptionSuggestions"></div>
               </div>
               <div class="row g-2 mb-2">
                 <div class="col-4">
@@ -979,6 +998,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
         const dashboardFilterForm = document.getElementById('dashboardFilterForm');
         const dashboardFilterSelect = document.getElementById('filterAccount');
+        const accountOptions = <?= json_encode(array_values(array_unique(array_map('strval', $accounts ?? []))), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+        const descriptionOptions = <?= json_encode(array_values(array_unique(array_map('strval', $descriptions ?? []))), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         const todayIso = () => {
           const now = new Date();
           const yyyy = now.getFullYear();
@@ -986,36 +1007,117 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const dd = String(now.getDate()).padStart(2, '0');
           return `${yyyy}-${mm}-${dd}`;
         };
+        const normalizeText = (value) => (value || '').trim().toLowerCase();
+        const txAccountInput = g('txAccountInput');
+        const txAccountSelect = g('txAccountSelect');
+        const txAccountNew = g('txAccountNew');
+        const txAccountSuggestions = g('txAccountSuggestions');
+        const txDescriptionInput = g('txDescription');
+        const txDescriptionSuggestions = g('txDescriptionSuggestions');
+        const hideSuggestions = (panel) => {
+          if (!panel) return;
+          panel.classList.add('d-none');
+          panel.textContent = '';
+        };
+        const findSuggestionMatches = (options, query) => {
+          const trimmed = (query || '').trim();
+          if (trimmed === '') return options.slice(0, 8);
+          const normalized = normalizeText(trimmed);
+          const exact = [];
+          const starts = [];
+          const contains = [];
+          options.forEach((option) => {
+            const label = String(option || '');
+            if (label === '') return;
+            const candidate = normalizeText(label);
+            if (candidate === normalized) exact.push(label);
+            else if (candidate.startsWith(normalized)) starts.push(label);
+            else if (candidate.includes(normalized)) contains.push(label);
+          });
+          return [...exact, ...starts, ...contains].slice(0, 8);
+        };
+        const renderSuggestions = (panel, matches, onPick) => {
+          if (!panel) return;
+          panel.textContent = '';
+          if (!matches.length) {
+            panel.classList.add('d-none');
+            return;
+          }
+          matches.forEach((match) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'list-group-item list-group-item-action py-2 px-3';
+            button.textContent = match;
+            button.addEventListener('pointerdown', (event) => {
+              event.preventDefault();
+              onPick(match);
+              hideSuggestions(panel);
+            });
+            panel.append(button);
+          });
+          panel.classList.remove('d-none');
+        };
+        const attachSuggestionInput = ({ input, panel, options, onPick }) => {
+          if (!input || !panel) return;
+          const update = () => {
+            renderSuggestions(panel, findSuggestionMatches(options, input.value || ''), onPick);
+          };
+          input.addEventListener('focus', update);
+          input.addEventListener('input', update);
+          input.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') hideSuggestions(panel);
+          });
+          input.addEventListener('blur', () => {
+            window.setTimeout(() => hideSuggestions(panel), 120);
+          });
+        };
+        const syncAccountFields = () => {
+          if (!txAccountInput || !txAccountSelect || !txAccountNew) return;
+          const typed = (txAccountInput.value || '').trim();
+          if (typed === '') {
+            txAccountSelect.value = '';
+            txAccountNew.value = '';
+            return;
+          }
+          const exactMatch = accountOptions.find((option) => normalizeText(option) === normalizeText(typed));
+          if (exactMatch) {
+            txAccountInput.value = exactMatch;
+            txAccountSelect.value = exactMatch;
+            txAccountNew.value = '';
+          } else {
+            txAccountSelect.value = '__new__';
+            txAccountNew.value = typed;
+          }
+        };
+        // Use custom suggestion lists instead of native select/datalist to avoid iPad text-entry issues.
+        attachSuggestionInput({
+          input: txAccountInput,
+          panel: txAccountSuggestions,
+          options: accountOptions,
+          onPick: (value) => {
+            if (txAccountInput) txAccountInput.value = value;
+            syncAccountFields();
+          },
+        });
+        attachSuggestionInput({
+          input: txDescriptionInput,
+          panel: txDescriptionSuggestions,
+          options: descriptionOptions,
+          onPick: (value) => {
+            if (txDescriptionInput) txDescriptionInput.value = value;
+          },
+        });
+        txAccountInput && txAccountInput.addEventListener('input', syncAccountFields);
         function openEditFromRow(row){
           if (!row) return;
           setv('txId', row.dataset.id || '');
           setv('txDate', row.dataset.date || '');
           setv('txAmount', row.dataset.amount || '');
-          // Account select / new
-          const sel = g('txAccountSelect');
-          const newInput = g('txAccountNew');
-          if (sel) {
-            const acct = row.dataset.account || '';
-            const acctId = row.dataset.accountId || '';
-            const keep = g('txAccountKeep'); if (keep) keep.value = acctId || '';
-            let found = false;
-            if (acct !== '') {
-              for (const opt of sel.options) { if (opt.value === acct) { sel.value = acct; found = true; break; } }
-            }
-            if (!found) {
-              if (acct !== '') {
-                const opt = document.createElement('option');
-                opt.value='__current__'; opt.textContent=`Current: ${acct}`; opt.disabled=true; opt.selected=true;
-                sel.insertBefore(opt, sel.firstChild);
-                if (newInput) { newInput.classList.add('d-none'); newInput.value=''; }
-              } else {
-                sel.value='__new__';
-                if (newInput) { newInput.classList.remove('d-none'); newInput.value=''; }
-              }
-            } else if (newInput) {
-              newInput.classList.add('d-none'); newInput.value='';
-            }
-          }
+          const acct = row.dataset.account || '';
+          const acctId = row.dataset.accountId || '';
+          const keep = g('txAccountKeep'); if (keep) keep.value = acctId || '';
+          setv('txAccountInput', acct);
+          syncAccountFields();
           setv('txDescription', row.dataset.description || '');
           setv('txCheck', row.dataset.check || '');
           const statusVal = row.dataset.status ?? '1';
@@ -1050,15 +1152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txAmount','');
           // Set account to current filter if present
           const acctName = addBtn.dataset.accountName || '';
-          const sel2 = g('txAccountSelect');
-          const newInput2 = g('txAccountNew');
           const keep2 = g('txAccountKeep'); if (keep2) keep2.value = '';
-          if (sel2) {
-            let found=false;
-            if (acctName) { for (const opt of sel2.options){ if(opt.value===acctName){ sel2.value=acctName; found=true; break; } } }
-            if (!found){ sel2.value='__new__'; newInput2 && (newInput2.classList.remove('d-none'), newInput2.value=acctName); }
-            else { newInput2 && (newInput2.classList.add('d-none'), newInput2.value=''); }
-          }
+          setv('txAccountInput', acctName);
+          syncAccountFields();
           setv('txDescription','');
           setv('txCheck','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
@@ -1097,13 +1193,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             dashboardFilterForm.submit();
           }
         });
-        // Toggle new account input visibility on select change
-        const sel = g('txAccountSelect');
-        sel && sel.addEventListener('change', () => {
-          const newInput = g('txAccountNew');
-          if (!newInput) return;
-          if (sel.value === '__new__') newInput.classList.remove('d-none'); else { newInput.classList.add('d-none'); newInput.value=''; }
-        });
 
         // Header add buttons (Scheduled/Pending/Posted-date)
         document.addEventListener('click', (e) => {
@@ -1124,15 +1213,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           // Set account to current filter if present (from main Add button's dataset)
           const addBtn = document.getElementById('addTxBtn');
           const acctName = addBtn?.dataset.accountName || '';
-          const sel2 = g('txAccountSelect');
-          const newInput2 = g('txAccountNew');
           const keep2 = g('txAccountKeep'); if (keep2) keep2.value = '';
-          if (sel2) {
-            let found=false;
-            if (acctName) { for (const opt of sel2.options){ if(opt.value===acctName){ sel2.value=acctName; found=true; break; } } }
-            if (!found){ sel2.value='__new__'; newInput2 && (newInput2.classList.remove('d-none'), newInput2.value=acctName); }
-            else { newInput2 && (newInput2.classList.add('d-none'), newInput2.value=''); }
-          }
+          setv('txAccountInput', acctName);
+          syncAccountFields();
           setv('txDescription','');
           setv('txCheck','');
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
@@ -1141,6 +1224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
         form && form.addEventListener('submit', async (ev) => {
           ev.preventDefault();
+          syncAccountFields();
           const fd = new FormData(form);
           const res = await fetch('transaction_save.php', { method:'POST', body: fd });
           if (!res.ok) return; // api_error.js will show modal
