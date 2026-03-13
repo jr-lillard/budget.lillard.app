@@ -274,6 +274,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         background: var(--bs-primary);
         color: #fff;
       }
+      .stale-scheduled-row .tx-click-edit {
+        opacity: 0.55;
+      }
     </style>
   </head>
   <body>
@@ -600,6 +603,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       if ($statusNorm === 0) $scheduledRows[] = $row;
                       elseif ($statusNorm === 2) $postedRows[] = $row; else $pendingRows[] = $row;
                     }
+                    $staleScheduledCutoff = date('Y-m-d', strtotime('-7 days'));
                   ?>
                   <?php if (!empty($scheduledRows)): ?>
                     <tr class="table-active">
@@ -622,12 +626,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
+                        $staleScheduledClass = ($date !== '' && $date < $staleScheduledCutoff) ? 'stale-scheduled-row' : '';
                       ?>
                       <?php
                         $dateCell = '';
                         if ($date !== $lastSchedDate) { $dateCell = htmlspecialchars((string)$date); $lastSchedDate = $date; }
                       ?>
-                      <tr data-id="<?= $txId ?>"
+                      <tr class="<?= $staleScheduledClass ?>" data-id="<?= $txId ?>"
                           data-date="<?= htmlspecialchars((string)$date) ?>"
                           data-amount="<?= htmlspecialchars((string)$row['amount']) ?>"
                           data-account="<?= htmlspecialchars((string)$acct) ?>"
