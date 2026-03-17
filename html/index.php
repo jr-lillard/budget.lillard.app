@@ -573,6 +573,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $projectedWithSched = ($totalAmount ?? 0) + ($schedTotalAmount ?? 0);
             $projClass = $projectedWithSched < 0 ? 'text-danger' : 'text-success';
             $projFmt = number_format($projectedWithSched, 2);
+            $showRecentAccountColumn = ((int)$filterAccountId <= 0);
+            $recentAccountColumnClass = $showRecentAccountColumn ? '' : 'd-none';
+            $recentAccountCellClass = trim($recentAccountColumnClass . ' tx-click-edit');
+            $recentSpacerColspan = $showRecentAccountColumn ? 5 : 4;
           ?>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
@@ -584,7 +588,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 <thead>
                   <tr>
                     <th scope="col">Date</th>
-                    <th scope="col">Account</th>
+                    <th scope="col" class="<?= $recentAccountColumnClass ?>">Account</th>
                     <th scope="col">Description</th>
                     <th scope="col" class="text-end">Amount</th>
                     <th scope="col" class="text-end">Actions</th>
@@ -608,7 +612,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <?php if (!empty($scheduledRows)): ?>
                     <tr class="table-active">
                       <td>Scheduled</td>
-                      <td></td>
+                      <td class="<?= $recentAccountColumnClass ?>"></td>
                       <td></td>
                       <td class="text-end"><strong class="<?= $projClass ?>">$<?= $projFmt ?></strong></td>
                       <td class="text-end">
@@ -641,7 +645,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
-                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                        <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
@@ -662,13 +666,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <?php endforeach; ?>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows) && !empty($scheduledRows)): ?>
-                    <tr class="spacer-row"><td colspan="5"></td></tr>
-                    <tr class="spacer-row"><td colspan="5"></td></tr>
+                    <tr class="spacer-row"><td colspan="<?= $recentSpacerColspan ?>"></td></tr>
+                    <tr class="spacer-row"><td colspan="<?= $recentSpacerColspan ?>"></td></tr>
                   <?php endif; ?>
                   <?php if (!empty($pendingRows)): ?>
                     <tr class="table-active">
                       <td>Pending</td>
-                      <td></td>
+                      <td class="<?= $recentAccountColumnClass ?>"></td>
                       <td></td>
                       <td class="text-end"><strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong></td>
                       <td class="text-end">
@@ -700,7 +704,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-status="1"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
-                        <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                        <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
@@ -719,12 +723,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       </tr>
                     <?php endforeach; endif; ?>
                   <?php if (!empty($postedRows) && (!empty($scheduledRows) || !empty($pendingRows))): ?>
-                    <tr class="spacer-row"><td colspan="5"></td></tr>
-                    <tr class="spacer-row"><td colspan="5"></td></tr>
+                    <tr class="spacer-row"><td colspan="<?= $recentSpacerColspan ?>"></td></tr>
+                    <tr class="spacer-row"><td colspan="<?= $recentSpacerColspan ?>"></td></tr>
                   <?php endif; ?>
                   <?php if (!empty($postedRows)):
                     $currentDate = null;
                     $postedSummaryShown = false;
+                    $postedHeaderAccountCell = '<td' . ($recentAccountColumnClass !== '' ? ' class="' . $recentAccountColumnClass . '"' : '') . '></td>';
                     foreach ($postedRows as $row):
                       $date = $row['date'] ?? '';
                       $acct = $row['account_name'] ?? '';
@@ -741,7 +746,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         if ($ts !== false) { $label = date('l, F j, Y', $ts); }
                         echo '<tr class="table-active">'
                            . '<td>' . htmlspecialchars($label) . '</td>'
-                           . '<td></td>'
+                           . $postedHeaderAccountCell
                            . '<td></td>'
                            . '<td class="text-end">' . (!$postedSummaryShown ? ('<strong class="' . $postedClass . '">$' . $postedFmt . '</strong>') : '') . '</td>'
                            . '<td class="text-end">'
@@ -764,7 +769,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-status="2"
                         data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
-                      <td class="tx-click-edit" role="button"><?= htmlspecialchars((string)$acct) ?></td>
+                      <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                       <td class="text-end">
