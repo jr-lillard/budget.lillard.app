@@ -28,6 +28,11 @@ $loggedIn = $sessionUser !== '';
 $currentUser = $sessionUser;
 $recentTx = [];
 $recentError = '';
+$recentLimit = 50;
+$recentPage = 1;
+$recentTotalRows = 0;
+$recentTotalPages = 1;
+$recentOffset = 0;
 $accPairs = [];
 $accounts = [];
 $descriptions = [];
@@ -311,11 +316,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $pdo = get_mysql_connection();
             // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
             try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
-            $limit = 50; // recent rows to show
             $defaultOwner = budget_default_owner();
             budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
             budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
             $owner = $currentUser;
+            $recentPage = max(1, (int)($_GET['recent_page'] ?? 1));
             // Activity filter persistence
             $validActivityOptions = ['0','3','6','9','12'];
             $activityMonths = isset($_GET['activity_months']) ? (string)$_GET['activity_months'] : (string)($_COOKIE['activity_months'] ?? '0');
@@ -349,17 +354,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $filterAccountId = (int)$_SESSION['tx_filter_account_id'];
             }
 
+            $countSql = 'SELECT COUNT(*) FROM transactions t WHERE t.owner = ?';
+            $countParams = [$owner];
+            if ($filterAccountId > 0) {
+                $countSql .= ' AND t.account_id = ?';
+                $countParams[] = $filterAccountId;
+            }
+            $countStmt = $pdo->prepare($countSql);
+            $countStmt->execute($countParams);
+            $recentTotalRows = (int)($countStmt->fetchColumn() ?: 0);
+            $recentTotalPages = max(1, (int)ceil($recentTotalRows / $recentLimit));
+            if ($recentPage > $recentTotalPages) {
+                $recentPage = $recentTotalPages;
+            }
+            $recentOffset = ($recentPage - 1) * $recentLimit;
+
             $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
                        t.account_id, a.name AS account_name
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id
                     WHERE t.owner = ?';
-            $params = [$owner];
-            if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; $params[] = $filterAccountId; }
-            $sql .= ' ORDER BY COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) ASC, t.`date` DESC, t.updated_at DESC LIMIT ?';
-            $params[] = $limit;
+            if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; }
+            $sql .= ' ORDER BY COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) ASC, t.`date` DESC, t.updated_at DESC LIMIT ? OFFSET ?';
             $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
+            $paramIndex = 1;
+            $stmt->bindValue($paramIndex++, $owner, PDO::PARAM_STR);
+            if ($filterAccountId > 0) {
+                $stmt->bindValue($paramIndex++, $filterAccountId, PDO::PARAM_INT);
+            }
+            $stmt->bindValue($paramIndex++, $recentLimit, PDO::PARAM_INT);
+            $stmt->bindValue($paramIndex++, $recentOffset, PDO::PARAM_INT);
+            $stmt->execute();
             $recentTx = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             // Compute total sum across all matching transactions (exclude scheduled), not limited
@@ -577,6 +602,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $recentAccountColumnClass = $showRecentAccountColumn ? '' : 'd-none';
             $recentAccountCellClass = trim($recentAccountColumnClass . ' tx-click-edit');
             $recentSpacerColspan = $showRecentAccountColumn ? 5 : 4;
+            $recentHasPrev = $recentPage > 1;
+            $recentHasNext = $recentPage < $recentTotalPages;
+            $recentPageFrom = $recentTotalRows > 0 ? ($recentOffset + 1) : 0;
+            $recentPageTo = min($recentOffset + $recentLimit, $recentTotalRows);
+            $recentQueryBase = [];
+            if ((int)$filterAccountId > 0) {
+              $recentQueryBase['account_id'] = (int)$filterAccountId;
+            }
+            if ($activityMonths !== '0') {
+              $recentQueryBase['activity_months'] = $activityMonths;
+            }
+            if ($hideClients === '1') {
+              $recentQueryBase['hide_clients'] = '1';
+            }
+            $recentPrevQuery = $recentQueryBase;
+            $recentPrevQuery['recent_page'] = max(1, $recentPage - 1);
+            $recentNextQuery = $recentQueryBase;
+            $recentNextQuery['recent_page'] = min($recentTotalPages, $recentPage + 1);
           ?>
           <?php if ($recentError !== ''): ?>
             <div class="alert alert-danger" role="alert"><?= htmlspecialchars($recentError) ?></div>
@@ -789,6 +832,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 </tbody>
               </table>
             </div>
+            <?php if ($recentTotalRows > 0): ?>
+              <div class="d-flex flex-wrap justify-content-between align-items-center mt-2 gap-2">
+                <div class="text-body-secondary small">
+                  Page <?= $recentPage ?> of <?= $recentTotalPages ?> • Showing <?= $recentPageFrom ?>-<?= $recentPageTo ?> of <?= $recentTotalRows ?> transaction<?= $recentTotalRows === 1 ? '' : 's' ?>
+                </div>
+                <div class="btn-group" role="group" aria-label="Recent transaction pagination">
+                  <a class="btn btn-outline-secondary btn-sm<?= $recentHasPrev ? '' : ' disabled' ?>" href="<?= $recentHasPrev ? htmlspecialchars('?' . http_build_query($recentPrevQuery)) : '#' ?>">« Prev</a>
+                  <a class="btn btn-outline-secondary btn-sm<?= $recentHasNext ? '' : ' disabled' ?>" href="<?= $recentHasNext ? htmlspecialchars('?' . http_build_query($recentNextQuery)) : '#' ?>">Next »</a>
+                </div>
+              </div>
+            <?php endif; ?>
           <?php endif; ?>
         </div>
       <?php else: ?>
