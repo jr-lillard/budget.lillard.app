@@ -6,6 +6,8 @@ require_once dirname(__DIR__) . '/util.php';
 // Dev-only webhook receiver for testing Privacy deliveries.
 $allowedHost = 'budget.lillard.dev';
 $notificationEmail = 'jr@lillard.org';
+$importOwner = 'jr@lillard.org';
+$importAccountId = 1; // Meritrust Credit Union Personal Checking
 $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
 if ($host !== $allowedHost) {
     http_response_code(404);
@@ -94,6 +96,8 @@ if ($method === 'GET' || $method === 'HEAD') {
             'event_type' => $data['body_json']['type'] ?? null,
             'event_token' => $data['body_json']['token'] ?? null,
             'email_ok' => $data['email_notification']['ok'] ?? null,
+            'import_action' => $data['import_transaction']['action'] ?? null,
+            'transaction_id' => $data['import_transaction']['transaction_id'] ?? null,
             'raw_url' => 'https://' . $allowedHost . $scriptPath . '?raw=' . rawurlencode(basename($file)),
         ];
     }
@@ -139,8 +143,124 @@ if ($encoded === false || file_put_contents($logPath, $encoded . PHP_EOL, LOCK_E
 }
 
 $rawUrl = 'https://' . $allowedHost . $scriptPath . '?raw=' . rawurlencode(basename($logPath));
-$eventType = is_array($decodedJson) ? (string)($decodedJson['type'] ?? '') : '';
-$eventToken = is_array($decodedJson) ? (string)($decodedJson['token'] ?? '') : '';
+$latestEvent = null;
+if (is_array($decodedJson) && isset($decodedJson['events']) && is_array($decodedJson['events'])) {
+    $eventValues = array_values(array_filter($decodedJson['events'], 'is_array'));
+    if ($eventValues !== []) {
+        $latestEvent = $eventValues[count($eventValues) - 1];
+    }
+}
+$eventType = is_array($latestEvent) ? strtoupper(trim((string)($latestEvent['type'] ?? ''))) : '';
+$eventToken = is_array($decodedJson) ? trim((string)($decodedJson['token'] ?? '')) : '';
+$importSummary = [
+    'attempted' => false,
+    'ok' => null,
+    'action' => 'ignored',
+    'reason' => null,
+    'event_type' => $eventType !== '' ? $eventType : null,
+    'transaction_token' => $eventToken !== '' ? $eventToken : null,
+    'transaction_id' => null,
+];
+if (is_array($decodedJson) && $eventToken !== '') {
+    $importSummary['attempted'] = true;
+    try {
+        $pdo = get_mysql_connection();
+        try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore */ }
+        budget_ensure_owner_column($pdo, 'transactions', 'owner', budget_default_owner());
+        try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
+
+        $owner = budget_canonical_user($importOwner);
+        $existingStmt = $pdo->prepare('SELECT id, status FROM transactions WHERE fm_pk = :fm_pk LIMIT 1');
+        $existingStmt->execute([':fm_pk' => $eventToken]);
+        $existingTx = $existingStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $existingId = (int)($existingTx['id'] ?? 0);
+        $existingStatus = (int)($existingTx['status'] ?? 0);
+
+        if ($eventType === 'VOID') {
+            if ($existingId > 0 && $existingStatus !== 2) {
+                $deleteStmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id LIMIT 1');
+                $deleteStmt->execute([':id' => $existingId]);
+                $importSummary['ok'] = true;
+                $importSummary['action'] = 'deleted';
+                $importSummary['transaction_id'] = $existingId;
+            } elseif ($existingId > 0) {
+                $importSummary['ok'] = true;
+                $importSummary['action'] = 'preserved_posted';
+                $importSummary['reason'] = 'Existing row already posted; leaving it unchanged';
+                $importSummary['transaction_id'] = $existingId;
+            } else {
+                $importSummary['ok'] = true;
+                $importSummary['action'] = 'ignored';
+                $importSummary['reason'] = 'VOID received for unknown transaction token';
+            }
+        } elseif (strtoupper(trim((string)($decodedJson['result'] ?? ''))) !== 'APPROVED') {
+            $importSummary['ok'] = true;
+            $importSummary['action'] = 'ignored';
+            $importSummary['reason'] = 'Only APPROVED transactions are imported';
+        } elseif (!in_array($eventType, ['AUTHORIZATION', 'AUTH_ADVICE', 'CLEARING', 'RETURN'], true)) {
+            $importSummary['ok'] = true;
+            $importSummary['action'] = 'ignored';
+            $importSummary['reason'] = 'Unsupported event type';
+        } else {
+            $createdAt = (string)($decodedJson['created'] ?? '');
+            $date = preg_match('/^\d{4}-\d{2}-\d{2}/', $createdAt) === 1 ? substr($createdAt, 0, 10) : gmdate('Y-m-d');
+            $descriptor = trim((string)($decodedJson['merchant']['descriptor'] ?? ''));
+            $description = $descriptor !== '' ? $descriptor : 'Privacy Card Transaction';
+            $amountMinor = abs((int)round((float)($decodedJson['amount'] ?? 0)));
+            $sign = ($eventType === 'RETURN') ? 1 : -1;
+            $amount = number_format(($sign * $amountMinor) / 100, 2, '.', '');
+
+            if ($existingId > 0) {
+                if ($existingStatus === 2) {
+                    $importSummary['ok'] = true;
+                    $importSummary['action'] = 'preserved_posted';
+                    $importSummary['reason'] = 'Existing row already posted; leaving it unchanged';
+                    $importSummary['transaction_id'] = $existingId;
+                } else {
+                    $updateStmt = $pdo->prepare(
+                        'UPDATE transactions
+                         SET account_id = :account_id,
+                             `date` = :date,
+                             amount = :amount,
+                             description = :description,
+                             updated_at_source = NOW()
+                         WHERE id = :id'
+                    );
+                    $updateStmt->execute([
+                        ':account_id' => $importAccountId,
+                        ':date' => $date,
+                        ':amount' => $amount,
+                        ':description' => $description,
+                        ':id' => $existingId,
+                    ]);
+                    $importSummary['ok'] = true;
+                    $importSummary['action'] = 'updated';
+                    $importSummary['transaction_id'] = $existingId;
+                }
+            } else {
+                $insertStmt = $pdo->prepare(
+                    'INSERT INTO transactions (fm_pk, account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
+                     VALUES (:fm_pk, :account_id, :date, :amount, :description, NULL, 0, 0, :owner, NOW(), NOW())'
+                );
+                $insertStmt->execute([
+                    ':fm_pk' => $eventToken,
+                    ':account_id' => $importAccountId,
+                    ':date' => $date,
+                    ':amount' => $amount,
+                    ':description' => $description,
+                    ':owner' => $owner,
+                ]);
+                $importSummary['ok'] = true;
+                $importSummary['action'] = 'inserted';
+                $importSummary['transaction_id'] = (int)$pdo->lastInsertId();
+            }
+        }
+    } catch (Throwable $e) {
+        $importSummary['ok'] = false;
+        $importSummary['action'] = 'error';
+        $importSummary['reason'] = $e->getMessage();
+    }
+}
 $bodyPreview = $decodedJson !== null
     ? (string)json_encode($decodedJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
     : ($payload['body_text'] ?? '[binary body; inspect saved raw log]');
@@ -162,6 +282,9 @@ $html = '<p>A Privacy webhook was received on <strong>budget.lillard.dev</strong
     . '<li><strong>Bytes:</strong> ' . (int)strlen($body) . '</li>'
     . '<li><strong>Event Type:</strong> ' . htmlspecialchars($eventType !== '' ? $eventType : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
     . '<li><strong>Event Token:</strong> ' . htmlspecialchars($eventToken !== '' ? $eventToken : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Import Action:</strong> ' . htmlspecialchars((string)$importSummary['action'], ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Budget Transaction ID:</strong> ' . htmlspecialchars($importSummary['transaction_id'] !== null ? (string)$importSummary['transaction_id'] : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Import Note:</strong> ' . htmlspecialchars((string)($importSummary['reason'] ?? '(none)'), ENT_QUOTES, 'UTF-8') . '</li>'
     . '<li><strong>Saved Log:</strong> <a href="' . htmlspecialchars($rawUrl, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars(basename($logPath), ENT_QUOTES, 'UTF-8') . '</a></li>'
     . '</ul>'
     . '<p><strong>Body preview</strong></p>'
@@ -173,9 +296,13 @@ $text = "A Privacy webhook was received on budget.lillard.dev.\n"
     . "Bytes: " . strlen($body) . "\n"
     . 'Event Type: ' . ($eventType !== '' ? $eventType : '(none)') . "\n"
     . 'Event Token: ' . ($eventToken !== '' ? $eventToken : '(none)') . "\n"
+    . 'Import Action: ' . (string)$importSummary['action'] . "\n"
+    . 'Budget Transaction ID: ' . ($importSummary['transaction_id'] !== null ? (string)$importSummary['transaction_id'] : '(none)') . "\n"
+    . 'Import Note: ' . (string)($importSummary['reason'] ?? '(none)') . "\n"
     . 'Saved Log: ' . $rawUrl . "\n\n"
     . "Body preview:\n{$bodyPreview}\n";
 [$mailOk, $mailErr] = send_mail_via_smtp2go($notificationEmail, $subject, $html, $text);
+$payload['import_transaction'] = $importSummary;
 $payload['email_notification'] = [
     'to' => $notificationEmail,
     'ok' => $mailOk,
@@ -194,6 +321,10 @@ $respond([
     'received_at' => $now,
     'body_bytes' => strlen($body),
     'content_type' => $contentType,
+    'import_action' => $importSummary['action'],
+    'import_ok' => $importSummary['ok'],
+    'transaction_id' => $importSummary['transaction_id'],
+    'import_reason' => $importSummary['reason'],
     'email_ok' => $mailOk,
     'email_error' => $mailErr,
 ]);
