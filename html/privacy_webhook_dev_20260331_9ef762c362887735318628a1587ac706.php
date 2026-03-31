@@ -143,6 +143,9 @@ function privacy_render_webhook_row(array $row, string $allowedHost, string $scr
     $headers = json_decode((string)($row['headers_json'] ?? ''), true);
     $bodyJson = json_decode((string)($row['body_json'] ?? ''), true);
     $importSummary = json_decode((string)($row['import_summary_json'] ?? ''), true);
+    if (is_array($importSummary) && array_key_exists('email_notification', $importSummary)) {
+        unset($importSummary['email_notification']);
+    }
     $id = (int)($row['id'] ?? 0);
 
     return [
