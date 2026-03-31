@@ -86,22 +86,6 @@ function privacy_extract_meta(?array $decodedJson): array
     ];
 }
 
-function privacy_build_body_preview(?array $decodedJson, ?string $bodyText): string
-{
-    if ($decodedJson !== null) {
-        $preview = (string)json_encode($decodedJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    } else {
-        $preview = $bodyText ?? '[binary body; inspect stored base64]';
-    }
-    if ($preview === '') {
-        $preview = '[empty body]';
-    }
-    if (strlen($preview) > 4000) {
-        $preview = substr($preview, 0, 4000) . "\n...[truncated]";
-    }
-    return $preview;
-}
-
 function privacy_ensure_webhooks_table(PDO $pdo): void
 {
     $pdo->exec(
@@ -184,9 +168,6 @@ function privacy_render_webhook_row(array $row, string $allowedHost, string $scr
         'result' => $row['result'] ?? null,
         'import_action' => $row['import_action'] ?? null,
         'transaction_id' => isset($row['transaction_id']) ? (int)$row['transaction_id'] : null,
-        'email_ok' => isset($row['email_ok']) ? (bool)$row['email_ok'] : null,
-        'email_error' => $row['email_error'] ?? null,
-        'email_sent_at' => privacy_db_datetime_to_iso($row['email_sent_at'] ?? null),
         'headers' => is_array($headers) ? $headers : null,
         'body_json' => is_array($bodyJson) ? $bodyJson : null,
         'body_text' => $row['body_text'] ?? null,
@@ -327,10 +308,8 @@ function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, strin
 
 // Dev-only webhook receiver for testing Privacy deliveries.
 $allowedHost = 'budget.lillard.dev';
-$notificationEmail = 'jr@lillard.org';
 $importOwner = 'jr@lillard.org';
 $importAccountId = 1; // Meritrust Credit Union Personal Checking
-$legacyLogDir = dirname(__DIR__) . '/sessions/privacy-webhooks';
 
 $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
 if ($host !== $allowedHost) {
@@ -403,27 +382,10 @@ if ($method === 'GET' || $method === 'HEAD') {
         ]);
     }
 
-    $rawFile = basename((string)($_GET['raw'] ?? ''));
-    if ($rawFile !== '') {
-        $path = $legacyLogDir . '/' . $rawFile;
-        if (!is_file($path)) {
-            $respond(['ok' => false, 'error' => 'Legacy log entry not found'], 404);
-        }
-        $contents = file_get_contents($path);
-        if ($contents === false) {
-            $respond(['ok' => false, 'error' => 'Unable to read legacy log entry'], 500);
-        }
-        header('Content-Type: application/json; charset=UTF-8');
-        if ($method !== 'HEAD') {
-            echo $contents;
-        }
-        exit;
-    }
-
     $listStmt = $pdo->query(
         'SELECT id, received_at, processed_at, processing_status, processing_attempts, content_type, body_bytes,
                 transaction_token, event_type, merchant_descriptor, amount_minor, result,
-                import_action, transaction_id, email_ok
+                import_action, transaction_id
          FROM privacy_webhooks
          ORDER BY id DESC
          LIMIT 50'
@@ -445,7 +407,6 @@ if ($method === 'GET' || $method === 'HEAD') {
             'merchant' => $row['merchant_descriptor'] ?? null,
             'amount' => isset($row['amount_minor']) ? privacy_amount_string((int)$row['amount_minor']) : null,
             'result' => $row['result'] ?? null,
-            'email_ok' => isset($row['email_ok']) ? (bool)$row['email_ok'] : null,
             'import_action' => $row['import_action'] ?? null,
             'transaction_id' => isset($row['transaction_id']) ? (int)$row['transaction_id'] : null,
             'record_url' => 'https://' . $allowedHost . $scriptPath . '?id=' . $webhookId,
@@ -538,63 +499,15 @@ try {
     $markStmt->execute([':id' => $webhookId]);
 
     $importSummary = privacy_process_transaction_import($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId);
-    $bodyPreview = privacy_build_body_preview(is_array($decodedJson) ? $decodedJson : null, $bodyText);
-    $eventType = (string)($meta['event_type'] ?? '');
-    $eventToken = (string)($meta['transaction_token'] ?? '');
-    $subject = 'Privacy webhook received on budget.lillard.dev';
-    if ($eventType !== '') {
-        $subject .= ' [' . $eventType . ']';
-    }
-
-    $html = '<p>A Privacy webhook was received on <strong>budget.lillard.dev</strong>.</p>'
-        . '<ul>'
-        . '<li><strong>Webhook ID:</strong> ' . $webhookId . '</li>'
-        . '<li><strong>Time:</strong> ' . htmlspecialchars($receivedAtIso, ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Method:</strong> ' . htmlspecialchars($method, ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Content-Type:</strong> ' . htmlspecialchars($contentType, ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Bytes:</strong> ' . (int)strlen($body) . '</li>'
-        . '<li><strong>Event Type:</strong> ' . htmlspecialchars($eventType !== '' ? $eventType : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Event Token:</strong> ' . htmlspecialchars($eventToken !== '' ? $eventToken : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Import Action:</strong> ' . htmlspecialchars((string)$importSummary['action'], ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Budget Transaction ID:</strong> ' . htmlspecialchars($importSummary['transaction_id'] !== null ? (string)$importSummary['transaction_id'] : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Import Note:</strong> ' . htmlspecialchars((string)($importSummary['reason'] ?? '(none)'), ENT_QUOTES, 'UTF-8') . '</li>'
-        . '<li><strong>Stored Record:</strong> <a href="' . htmlspecialchars($recordUrl, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($recordUrl, ENT_QUOTES, 'UTF-8') . '</a></li>'
-        . '</ul>'
-        . '<p><strong>Body preview</strong></p>'
-        . '<pre style="white-space: pre-wrap; word-break: break-word;">' . htmlspecialchars($bodyPreview, ENT_QUOTES, 'UTF-8') . '</pre>';
-    $text = "A Privacy webhook was received on budget.lillard.dev.\n"
-        . "Webhook ID: {$webhookId}\n"
-        . "Time: {$receivedAtIso}\n"
-        . "Method: {$method}\n"
-        . "Content-Type: {$contentType}\n"
-        . 'Bytes: ' . strlen($body) . "\n"
-        . 'Event Type: ' . ($eventType !== '' ? $eventType : '(none)') . "\n"
-        . 'Event Token: ' . ($eventToken !== '' ? $eventToken : '(none)') . "\n"
-        . 'Import Action: ' . (string)$importSummary['action'] . "\n"
-        . 'Budget Transaction ID: ' . ($importSummary['transaction_id'] !== null ? (string)$importSummary['transaction_id'] : '(none)') . "\n"
-        . 'Import Note: ' . (string)($importSummary['reason'] ?? '(none)') . "\n"
-        . "Stored Record: {$recordUrl}\n\n"
-        . "Body preview:\n{$bodyPreview}\n";
-    [$mailOk, $mailErr] = send_mail_via_smtp2go($notificationEmail, $subject, $html, $text);
 
     $processingNotes = [];
     if ($importSummary['ok'] === false && !empty($importSummary['reason'])) {
         $processingNotes[] = 'Import: ' . (string)$importSummary['reason'];
     }
-    if (!$mailOk && $mailErr !== null) {
-        $processingNotes[] = 'Email: ' . $mailErr;
-    }
     $processingStatus = ($importSummary['ok'] === false) ? 'error' : 'processed';
     $processingError = $processingNotes !== [] ? implode(' | ', $processingNotes) : null;
-    $emailSentAt = $mailOk ? gmdate('Y-m-d H:i:s') : null;
     $summaryJson = privacy_json_encode([
         'import_transaction' => $importSummary,
-        'email_notification' => [
-            'to' => $notificationEmail,
-            'ok' => $mailOk,
-            'error' => $mailErr,
-            'sent_at' => $mailOk ? gmdate('Y-m-d\TH:i:s\Z') : null,
-        ],
     ]);
 
     $finalizeStmt = $pdo->prepare(
@@ -616,9 +529,9 @@ try {
         ':import_action' => $importSummary['action'],
         ':transaction_id' => $importSummary['transaction_id'],
         ':import_summary_json' => $summaryJson,
-        ':email_ok' => $mailOk ? 1 : 0,
-        ':email_error' => $mailErr,
-        ':email_sent_at' => $emailSentAt,
+        ':email_ok' => null,
+        ':email_error' => null,
+        ':email_sent_at' => null,
         ':id' => $webhookId,
     ]);
 } catch (Throwable $e) {
