@@ -87,14 +87,23 @@ if ($method === 'GET' || $method === 'HEAD') {
     $entries = [];
     foreach (array_slice($files, 0, 20) as $file) {
         $data = json_decode((string)file_get_contents($file), true);
+        $bodyJson = is_array($data['body_json'] ?? null) ? $data['body_json'] : [];
+        $merchantDescriptor = trim((string)($bodyJson['merchant']['descriptor'] ?? ''));
+        $amountMinor = isset($bodyJson['amount']) && is_numeric($bodyJson['amount']) ? (int)$bodyJson['amount'] : null;
+        $displayEventType = $data['import_transaction']['event_type']
+            ?? $bodyJson['type']
+            ?? null;
         $entries[] = [
             'file' => basename($file),
             'received_at' => $data['received_at'] ?? null,
             'method' => $data['method'] ?? null,
             'content_type' => $data['content_type'] ?? null,
             'body_bytes' => $data['body_bytes'] ?? null,
-            'event_type' => $data['body_json']['type'] ?? null,
-            'event_token' => $data['body_json']['token'] ?? null,
+            'event_type' => $displayEventType,
+            'event_token' => $bodyJson['token'] ?? null,
+            'merchant' => $merchantDescriptor !== '' ? $merchantDescriptor : null,
+            'amount' => $amountMinor !== null ? number_format($amountMinor / 100, 2, '.', '') : null,
+            'result' => $bodyJson['result'] ?? null,
             'email_ok' => $data['email_notification']['ok'] ?? null,
             'import_action' => $data['import_transaction']['action'] ?? null,
             'transaction_id' => $data['import_transaction']['transaction_id'] ?? null,
