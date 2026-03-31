@@ -416,7 +416,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $schedTotalAmount = (float)($schedSumStmt->fetchColumn() ?: 0);
 
             // Account activity grouped by account (all time), with optional inactivity filter
-            $activitySql = "SELECT COALESCE(a.name, '(No account)') AS account_name,
+            $activitySql = "SELECT COALESCE(a.id, 0) AS account_id,
+                                   COALESCE(a.name, '(No account)') AS account_name,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 0 THEN t.amount ELSE 0 END) AS scheduled_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 1 THEN t.amount ELSE 0 END) AS pending_total,
                                    SUM(CASE WHEN COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) = 2 THEN t.amount ELSE 0 END) AS posted_total,
@@ -425,7 +426,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                             FROM transactions t
                             LEFT JOIN accounts a ON a.id = t.account_id
                             WHERE t.owner = ?
-                            GROUP BY account_name
+                            GROUP BY account_id, account_name
                             HAVING (scheduled_total IS NOT NULL OR pending_total IS NOT NULL OR posted_total IS NOT NULL)";
             $paramsActivity = [$owner];
             if ($activityMonths !== '0') {
@@ -505,8 +506,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <tbody>
                       <?php
                         $totSched = 0.0; $totPend = 0.0; $totPost = 0.0;
+                        $activityFilterQueryBase = [];
+                        if ($activityMonths !== '0') {
+                          $activityFilterQueryBase['activity_months'] = $activityMonths;
+                        }
+                        if ($hideClients === '1') {
+                          $activityFilterQueryBase['hide_clients'] = '1';
+                        }
                       ?>
                       <?php foreach ($accountActivity as $acct):
+                        $activityAccountId = (int)($acct['account_id'] ?? 0);
+                        $activityAccountName = (string)($acct['account_name'] ?? '');
                         $sched = (float)($acct['scheduled_total'] ?? 0);
                         $pend = (float)($acct['pending_total'] ?? 0);
                         $post = (float)($acct['posted_total'] ?? 0);
@@ -517,11 +527,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $postDisplay = $post;
                         $pendDisplay = $post + $pend;
                         $schedDisplay = $post + $pend + $sched;
+                        $activityAccountQuery = $activityFilterQueryBase;
+                        if ($activityAccountId > 0) {
+                          $activityAccountQuery['account_id'] = $activityAccountId;
+                        }
+                        $activityAccountHref = $activityAccountId > 0 ? ('?' . http_build_query($activityAccountQuery)) : '';
+                        $activityAccountLinkClass = 'link-body-emphasis text-decoration-none';
+                        if ($activityAccountId > 0 && $activityAccountId === (int)$filterAccountId) {
+                          $activityAccountLinkClass .= ' fw-semibold';
+                        }
                       ?>
                         <tr>
                           <td>
                             <div class="d-flex align-items-center gap-2">
-                              <span><?= htmlspecialchars((string)($acct['account_name'] ?? '')) ?></span>
+                              <?php if ($activityAccountId > 0): ?>
+                                <a class="<?= htmlspecialchars($activityAccountLinkClass) ?>" href="<?= htmlspecialchars($activityAccountHref) ?>" title="Show recent transactions for this account">
+                                  <?= htmlspecialchars($activityAccountName) ?>
+                                </a>
+                              <?php else: ?>
+                                <span><?= htmlspecialchars($activityAccountName) ?></span>
+                              <?php endif; ?>
                               <?php if ($isClient): ?><span class="badge text-bg-warning">Client</span><?php endif; ?>
                               <div class="dropdown ms-auto">
                                 <button class="btn btn-sm border-0 text-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Account actions">
