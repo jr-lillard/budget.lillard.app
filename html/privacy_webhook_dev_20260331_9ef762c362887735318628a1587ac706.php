@@ -1,8 +1,11 @@
 <?php
 declare(strict_types=1);
 
+require_once dirname(__DIR__) . '/util.php';
+
 // Dev-only webhook receiver for testing Privacy deliveries.
 $allowedHost = 'budget.lillard.dev';
+$notificationEmail = 'jr@lillard.org';
 $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
 if ($host !== $allowedHost) {
     http_response_code(404);
@@ -90,6 +93,7 @@ if ($method === 'GET' || $method === 'HEAD') {
             'body_bytes' => $data['body_bytes'] ?? null,
             'event_type' => $data['body_json']['type'] ?? null,
             'event_token' => $data['body_json']['token'] ?? null,
+            'email_ok' => $data['email_notification']['ok'] ?? null,
             'raw_url' => 'https://' . $allowedHost . $scriptPath . '?raw=' . rawurlencode(basename($file)),
         ];
     }
@@ -134,6 +138,55 @@ if ($encoded === false || file_put_contents($logPath, $encoded . PHP_EOL, LOCK_E
     $respond(['ok' => false, 'error' => 'Unable to persist webhook payload'], 500);
 }
 
+$rawUrl = 'https://' . $allowedHost . $scriptPath . '?raw=' . rawurlencode(basename($logPath));
+$eventType = is_array($decodedJson) ? (string)($decodedJson['type'] ?? '') : '';
+$eventToken = is_array($decodedJson) ? (string)($decodedJson['token'] ?? '') : '';
+$bodyPreview = $decodedJson !== null
+    ? (string)json_encode($decodedJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+    : ($payload['body_text'] ?? '[binary body; inspect saved raw log]');
+if ($bodyPreview === '') {
+    $bodyPreview = '[empty body]';
+}
+if (strlen($bodyPreview) > 4000) {
+    $bodyPreview = substr($bodyPreview, 0, 4000) . "\n...[truncated]";
+}
+$subject = 'Privacy webhook received on budget.lillard.dev';
+if ($eventType !== '') {
+    $subject .= ' [' . $eventType . ']';
+}
+$html = '<p>A Privacy webhook was received on <strong>budget.lillard.dev</strong>.</p>'
+    . '<ul>'
+    . '<li><strong>Time:</strong> ' . htmlspecialchars($now, ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Method:</strong> ' . htmlspecialchars($method, ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Content-Type:</strong> ' . htmlspecialchars($contentType, ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Bytes:</strong> ' . (int)strlen($body) . '</li>'
+    . '<li><strong>Event Type:</strong> ' . htmlspecialchars($eventType !== '' ? $eventType : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Event Token:</strong> ' . htmlspecialchars($eventToken !== '' ? $eventToken : '(none)', ENT_QUOTES, 'UTF-8') . '</li>'
+    . '<li><strong>Saved Log:</strong> <a href="' . htmlspecialchars($rawUrl, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars(basename($logPath), ENT_QUOTES, 'UTF-8') . '</a></li>'
+    . '</ul>'
+    . '<p><strong>Body preview</strong></p>'
+    . '<pre style="white-space: pre-wrap; word-break: break-word;">' . htmlspecialchars($bodyPreview, ENT_QUOTES, 'UTF-8') . '</pre>';
+$text = "A Privacy webhook was received on budget.lillard.dev.\n"
+    . "Time: {$now}\n"
+    . "Method: {$method}\n"
+    . "Content-Type: {$contentType}\n"
+    . "Bytes: " . strlen($body) . "\n"
+    . 'Event Type: ' . ($eventType !== '' ? $eventType : '(none)') . "\n"
+    . 'Event Token: ' . ($eventToken !== '' ? $eventToken : '(none)') . "\n"
+    . 'Saved Log: ' . $rawUrl . "\n\n"
+    . "Body preview:\n{$bodyPreview}\n";
+[$mailOk, $mailErr] = send_mail_via_smtp2go($notificationEmail, $subject, $html, $text);
+$payload['email_notification'] = [
+    'to' => $notificationEmail,
+    'ok' => $mailOk,
+    'error' => $mailErr,
+    'sent_at' => gmdate('Y-m-d\TH:i:s\Z'),
+];
+$encodedWithMail = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+if ($encodedWithMail !== false) {
+    file_put_contents($logPath, $encodedWithMail . PHP_EOL, LOCK_EX);
+}
+
 $respond([
     'ok' => true,
     'message' => 'Webhook received on dev',
@@ -141,4 +194,6 @@ $respond([
     'received_at' => $now,
     'body_bytes' => strlen($body),
     'content_type' => $contentType,
+    'email_ok' => $mailOk,
+    'email_error' => $mailErr,
 ]);
