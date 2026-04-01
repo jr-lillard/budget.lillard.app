@@ -103,6 +103,178 @@ function budget_ensure_owner_column(PDO $pdo, string $table, string $column = 'o
     }
 }
 
+function budget_ensure_description_rules_table(PDO $pdo): void
+{
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS description_rules (
+                id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                owner VARCHAR(190) NOT NULL,
+                source VARCHAR(32) NOT NULL DEFAULT "privacy",
+                match_type VARCHAR(16) NOT NULL DEFAULT "exact",
+                match_value VARCHAR(255) NOT NULL,
+                replacement_value VARCHAR(255) NOT NULL,
+                learned_from_transaction_id INT UNSIGNED DEFAULT NULL,
+                learned_from_fm_pk VARCHAR(64) DEFAULT NULL,
+                times_applied INT UNSIGNED NOT NULL DEFAULT 0,
+                last_applied_at DATETIME DEFAULT NULL,
+                created_at_source DATETIME DEFAULT NULL,
+                updated_at_source DATETIME DEFAULT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_owner_source_match (owner, source, match_type, match_value),
+                KEY idx_owner_source_replacement (owner, source, replacement_value)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+        );
+    } catch (Throwable $e) {
+        // best-effort only
+    }
+}
+
+function budget_lookup_privacy_raw_descriptor(PDO $pdo, string $transactionToken): ?string
+{
+    $transactionToken = trim($transactionToken);
+    if ($transactionToken === '') {
+        return null;
+    }
+
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT merchant_descriptor
+             FROM privacy_webhooks
+             WHERE transaction_token = :transaction_token
+               AND merchant_descriptor IS NOT NULL
+               AND merchant_descriptor <> ""
+             ORDER BY id DESC
+             LIMIT 1'
+        );
+        $stmt->execute([':transaction_token' => $transactionToken]);
+        $value = trim((string)($stmt->fetchColumn() ?? ''));
+        return $value !== '' ? $value : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function budget_apply_privacy_description_rule(PDO $pdo, string $owner, string $rawDescription): string
+{
+    $owner = budget_canonical_user($owner);
+    $rawDescription = trim($rawDescription);
+    if ($owner === '' || $rawDescription === '') {
+        return $rawDescription;
+    }
+
+    budget_ensure_description_rules_table($pdo);
+
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT id, replacement_value
+             FROM description_rules
+             WHERE owner = :owner
+               AND source = "privacy"
+               AND match_type = "exact"
+               AND match_value = :match_value
+             LIMIT 1'
+        );
+        $stmt->execute([
+            ':owner' => $owner,
+            ':match_value' => $rawDescription,
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        if (!$row) {
+            return $rawDescription;
+        }
+
+        $replacement = trim((string)($row['replacement_value'] ?? ''));
+        $ruleId = (int)($row['id'] ?? 0);
+        if ($ruleId > 0) {
+            try {
+                $touch = $pdo->prepare(
+                    'UPDATE description_rules
+                     SET times_applied = times_applied + 1,
+                         last_applied_at = NOW(),
+                         updated_at_source = NOW()
+                     WHERE id = :id'
+                );
+                $touch->execute([':id' => $ruleId]);
+            } catch (Throwable $e) {
+                // best-effort only
+            }
+        }
+
+        return $replacement !== '' ? $replacement : $rawDescription;
+    } catch (Throwable $e) {
+        return $rawDescription;
+    }
+}
+
+function budget_learn_privacy_description_rule_from_transaction(PDO $pdo, string $owner, int $transactionId, string $newDescription): void
+{
+    $owner = budget_canonical_user($owner);
+    $newDescription = trim($newDescription);
+    if ($owner === '' || $transactionId <= 0 || $newDescription === '') {
+        return;
+    }
+
+    $txStmt = $pdo->prepare('SELECT fm_pk FROM transactions WHERE id = :id AND owner = :owner LIMIT 1');
+    $txStmt->execute([
+        ':id' => $transactionId,
+        ':owner' => $owner,
+    ]);
+    $tx = $txStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    $transactionToken = trim((string)($tx['fm_pk'] ?? ''));
+    if ($transactionToken === '') {
+        return;
+    }
+
+    $rawDescription = budget_lookup_privacy_raw_descriptor($pdo, $transactionToken);
+    $rawDescription = trim((string)$rawDescription);
+    if ($rawDescription === '') {
+        return;
+    }
+
+    budget_ensure_description_rules_table($pdo);
+
+    if ($rawDescription === $newDescription) {
+        $deleteStmt = $pdo->prepare(
+            'DELETE FROM description_rules
+             WHERE owner = :owner
+               AND source = "privacy"
+               AND match_type = "exact"
+               AND match_value = :match_value'
+        );
+        $deleteStmt->execute([
+            ':owner' => $owner,
+            ':match_value' => $rawDescription,
+        ]);
+        return;
+    }
+
+    $upsertStmt = $pdo->prepare(
+        'INSERT INTO description_rules (
+            owner, source, match_type, match_value, replacement_value,
+            learned_from_transaction_id, learned_from_fm_pk,
+            created_at_source, updated_at_source
+        ) VALUES (
+            :owner, "privacy", "exact", :match_value, :replacement_value,
+            :learned_from_transaction_id, :learned_from_fm_pk,
+            NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            replacement_value = VALUES(replacement_value),
+            learned_from_transaction_id = VALUES(learned_from_transaction_id),
+            learned_from_fm_pk = VALUES(learned_from_fm_pk),
+            updated_at_source = NOW()'
+    );
+    $upsertStmt->execute([
+        ':owner' => $owner,
+        ':match_value' => $rawDescription,
+        ':replacement_value' => $newDescription,
+        ':learned_from_transaction_id' => $transactionId,
+        ':learned_from_fm_pk' => $transactionToken,
+    ]);
+}
+
 /**
  * Persistent login ("remember me") helpers.
  * Implements a selector/validator token stored server-side and in a secure cookie.

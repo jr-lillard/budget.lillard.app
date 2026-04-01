@@ -201,6 +201,11 @@ try {
             echo json_encode(['ok' => false, 'error' => 'Not found']);
             return;
         }
+        try {
+            budget_learn_privacy_description_rule_from_transaction($pdo, $owner, $id, $description);
+        } catch (Throwable $e) {
+            // Don't block manual transaction edits if rule learning fails.
+        }
         echo json_encode(['ok' => true, 'id' => $id]);
     }
 } catch (Throwable $e) {

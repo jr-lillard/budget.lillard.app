@@ -250,7 +250,9 @@ function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, strin
         $createdAt = (string)($decodedJson['created'] ?? '');
         $date = preg_match('/^\d{4}-\d{2}-\d{2}/', $createdAt) === 1 ? substr($createdAt, 0, 10) : gmdate('Y-m-d');
         $descriptor = trim((string)($decodedJson['merchant']['descriptor'] ?? ''));
-        $description = $descriptor !== '' ? $descriptor : 'Privacy Card Transaction';
+        $description = $descriptor !== ''
+            ? budget_apply_privacy_description_rule($pdo, $owner, $descriptor)
+            : 'Privacy Card Transaction';
         $amountMinor = abs((int)round((float)($decodedJson['amount'] ?? 0)));
         $sign = ($eventType === 'RETURN') ? 1 : -1;
         $amount = number_format(($sign * $amountMinor) / 100, 2, '.', '');

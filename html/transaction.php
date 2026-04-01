@@ -82,6 +82,11 @@ try {
             ':id' => $id,
             ':owner' => $owner,
         ]);
+        try {
+            budget_learn_privacy_description_rule_from_transaction($pdo, $owner, $id, $description);
+        } catch (Throwable $e) {
+            // Don't block manual transaction edits if rule learning fails.
+        }
         $saved = true;
     }
 
