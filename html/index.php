@@ -102,7 +102,7 @@ function budget_redirect(string $target, array $afterResponseTasks = []): void
     exit;
 }
 
-function budget_privacy_status_badge_html(array $row): string
+function budget_privacy_status_cell_html(array $row): string
 {
     $fmPk = trim((string)($row['fm_pk'] ?? ''));
     $privacyStatus = strtoupper(trim((string)($row['privacy_status'] ?? '')));
@@ -114,13 +114,12 @@ function budget_privacy_status_badge_html(array $row): string
         return '';
     }
 
-    $badgeClass = 'text-bg-secondary';
-    $icon = 'bi-question-circle';
-    $label = 'Privacy';
+    $statusClass = 'privacy-status-muted';
+    $label = 'linked';
     $titleParts = [];
 
     if ($privacyStatus !== '') {
-        $label = 'Privacy ' . $privacyStatus;
+        $label = $privacyStatus;
         $titleParts[] = 'Privacy API status: ' . $privacyStatus;
         if ($privacyEventType !== '') {
             $titleParts[] = 'Latest event: ' . $privacyEventType;
@@ -128,35 +127,29 @@ function budget_privacy_status_badge_html(array $row): string
 
         switch ($privacyStatus) {
             case 'SETTLED':
-                $badgeClass = 'text-bg-success';
-                $icon = 'bi-check-circle-fill';
+                $statusClass = 'privacy-status-settled';
                 break;
             case 'PENDING':
             case 'SETTLING':
-                $badgeClass = 'text-bg-warning';
-                $icon = 'bi-hourglass-split';
+                $statusClass = 'privacy-status-open';
                 break;
             case 'VOIDED':
             case 'DECLINED':
             case 'BOUNCED':
             case 'EXPIRED':
-                $badgeClass = 'text-bg-danger';
-                $icon = 'bi-x-circle-fill';
+                $statusClass = 'privacy-status-terminal';
                 break;
             default:
-                $badgeClass = 'text-bg-secondary';
-                $icon = 'bi-question-circle';
+                $statusClass = 'privacy-status-muted';
                 break;
         }
     } elseif ($privacySyncStatus === 'active') {
-        $label = 'Privacy queued';
-        $badgeClass = 'text-bg-info';
-        $icon = 'bi-arrow-repeat';
+        $label = 'queued';
+        $statusClass = 'privacy-status-queued';
         $titleParts[] = 'Waiting for Privacy API status';
     } elseif ($privacySyncStatus === 'error') {
-        $label = 'Privacy sync error';
-        $badgeClass = 'text-bg-danger';
-        $icon = 'bi-exclamation-triangle-fill';
+        $label = 'error';
+        $statusClass = 'privacy-status-error';
         $titleParts[] = 'Privacy sync error';
     }
 
@@ -169,9 +162,9 @@ function budget_privacy_status_badge_html(array $row): string
 
     $title = implode(' | ', $titleParts);
 
-    return '<span class="badge privacy-status-badge ' . htmlspecialchars($badgeClass, ENT_QUOTES, 'UTF-8') . '"'
+    return '<span class="privacy-status-text ' . htmlspecialchars($statusClass, ENT_QUOTES, 'UTF-8') . '"'
         . ($title !== '' ? ' title="' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '"' : '')
-        . '><i class="bi ' . htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') . ' me-1"></i>'
+        . '>'
         . htmlspecialchars($label, ENT_QUOTES, 'UTF-8')
         . '</span>';
 }
@@ -357,17 +350,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       .stale-scheduled-row .tx-click-edit {
         opacity: 0.55;
       }
-      .privacy-status-badge {
+      .privacy-status-col {
+        width: 6.75rem;
+        white-space: nowrap;
+      }
+      .privacy-status-cell {
+        text-align: center;
+      }
+      .privacy-status-text {
+        display: inline-block;
+        min-width: 5.75rem;
         font-size: 0.68rem;
         font-weight: 600;
-        letter-spacing: 0.01em;
-        vertical-align: middle;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--bs-secondary-color);
       }
-      .privacy-status-inline {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        flex-wrap: wrap;
+      .privacy-status-settled {
+        color: var(--bs-success-text-emphasis);
+      }
+      .privacy-status-open {
+        color: var(--bs-warning-text-emphasis);
+      }
+      .privacy-status-terminal,
+      .privacy-status-error {
+        color: var(--bs-danger-text-emphasis);
+      }
+      .privacy-status-queued {
+        color: var(--bs-info-text-emphasis);
       }
     </style>
   </head>
@@ -719,7 +729,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $showRecentAccountColumn = ((int)$filterAccountId <= 0);
             $recentAccountColumnClass = $showRecentAccountColumn ? '' : 'd-none';
             $recentAccountCellClass = trim($recentAccountColumnClass . ' tx-click-edit');
-            $recentSpacerColspan = $showRecentAccountColumn ? 5 : 4;
+            $recentPrivacyColumnClass = 'privacy-status-col privacy-status-cell';
+            $recentPrivacyCellClass = trim($recentPrivacyColumnClass . ' tx-click-edit');
+            $recentSpacerColspan = $showRecentAccountColumn ? 6 : 5;
             $recentHasPrev = $recentPage > 1;
             $recentHasNext = $recentPage < $recentTotalPages;
             $recentPageFrom = $recentTotalRows > 0 ? ($recentOffset + 1) : 0;
@@ -751,6 +763,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <th scope="col">Date</th>
                     <th scope="col" class="<?= $recentAccountColumnClass ?>">Account</th>
                     <th scope="col">Description</th>
+                    <th scope="col" class="<?= $recentPrivacyColumnClass ?>">Privacy</th>
                     <th scope="col" class="text-end">Amount</th>
                     <th scope="col" class="text-end">Actions</th>
                   </tr>
@@ -775,6 +788,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td>Scheduled</td>
                       <td class="<?= $recentAccountColumnClass ?>"></td>
                       <td></td>
+                      <td class="<?= $recentPrivacyColumnClass ?>"></td>
                       <td class="text-end"><strong class="<?= $projClass ?>">$<?= $projFmt ?></strong></td>
                       <td class="text-end">
                         <button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="0" title="New scheduled transaction">
@@ -792,7 +806,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                         $staleScheduledClass = ($date !== '' && $date < $staleScheduledCutoff) ? 'stale-scheduled-row' : '';
-                        $privacyStatusBadge = budget_privacy_status_badge_html($row);
+                        $privacyStatusCell = budget_privacy_status_cell_html($row);
                       ?>
                       <?php
                         $dateCell = '';
@@ -808,12 +822,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
-                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">
-                          <span class="privacy-status-inline">
-                            <span>&nbsp;<?= htmlspecialchars((string)$desc) ?></span>
-                            <?= $privacyStatusBadge ?>
-                          </span>
-                        </td>
+                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="<?= $recentPrivacyCellClass ?>" role="button"><?= $privacyStatusCell ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
                           <div class="dropdown">
@@ -841,6 +851,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td>Pending</td>
                       <td class="<?= $recentAccountColumnClass ?>"></td>
                       <td></td>
+                      <td class="<?= $recentPrivacyColumnClass ?>"></td>
                       <td class="text-end"><strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong></td>
                       <td class="text-end">
                         <button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="1" title="New pending transaction">
@@ -857,7 +868,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
-                        $privacyStatusBadge = budget_privacy_status_badge_html($row);
+                        $privacyStatusCell = budget_privacy_status_cell_html($row);
                       ?>
                       <?php
                         $dateCell = '';
@@ -873,12 +884,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
-                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">
-                          <span class="privacy-status-inline">
-                            <span>&nbsp;<?= htmlspecialchars((string)$desc) ?></span>
-                            <?= $privacyStatusBadge ?>
-                          </span>
-                        </td>
+                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="<?= $recentPrivacyCellClass ?>" role="button"><?= $privacyStatusCell ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
                           <div class="dropdown">
@@ -903,6 +910,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     $currentDate = null;
                     $postedSummaryShown = false;
                     $postedHeaderAccountCell = '<td' . ($recentAccountColumnClass !== '' ? ' class="' . $recentAccountColumnClass . '"' : '') . '></td>';
+                    $postedHeaderPrivacyCell = '<td class="' . $recentPrivacyColumnClass . '"></td>';
                     foreach ($postedRows as $row):
                       $date = $row['date'] ?? '';
                       $acct = $row['account_name'] ?? '';
@@ -921,6 +929,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                            . '<td>' . htmlspecialchars($label) . '</td>'
                            . $postedHeaderAccountCell
                            . '<td></td>'
+                           . $postedHeaderPrivacyCell
                            . '<td class="text-end">' . (!$postedSummaryShown ? ('<strong class="' . $postedClass . '">$' . $postedFmt . '</strong>') : '') . '</td>'
                            . '<td class="text-end">'
                            .   '<button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="2" data-date="' . htmlspecialchars((string)$date) . '" title="New posted transaction on this date">'
@@ -944,6 +953,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                       <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
+                      <td class="<?= $recentPrivacyCellClass ?>" role="button"></td>
                       <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                       <td class="text-end">
                         <div class="dropdown">
