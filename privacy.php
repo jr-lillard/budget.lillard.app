@@ -698,6 +698,13 @@ function privacy_bootstrap_sync_rows_from_api(PDO $pdo, array $apiTransactionsBy
             null,
             'active'
         );
+        $touchStmt = $pdo->prepare(
+            'UPDATE privacy_transaction_sync
+             SET next_check_at = NOW(),
+                 last_error = NULL
+             WHERE transaction_token = :transaction_token'
+        );
+        $touchStmt->execute([':transaction_token' => $token]);
         $count++;
     }
 
