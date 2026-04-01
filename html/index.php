@@ -2,6 +2,7 @@
 declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../util.php';
+require_once __DIR__ . '/../privacy.php';
 
 // Attempt auto-login from persistent cookie if no active session
 try { $pdo = get_mysql_connection(); auth_login_from_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
@@ -99,6 +100,80 @@ function budget_redirect(string $target, array $afterResponseTasks = []): void
         }
     }
     exit;
+}
+
+function budget_privacy_status_badge_html(array $row): string
+{
+    $fmPk = trim((string)($row['fm_pk'] ?? ''));
+    $privacyStatus = strtoupper(trim((string)($row['privacy_status'] ?? '')));
+    $privacyEventType = strtoupper(trim((string)($row['privacy_event_type'] ?? '')));
+    $privacySyncStatus = strtolower(trim((string)($row['privacy_sync_status'] ?? '')));
+    $privacySyncError = trim((string)($row['privacy_sync_error'] ?? ''));
+
+    if ($fmPk === '' && $privacyStatus === '' && $privacySyncStatus === '') {
+        return '';
+    }
+
+    $badgeClass = 'text-bg-secondary';
+    $icon = 'bi-question-circle';
+    $label = 'Privacy';
+    $titleParts = [];
+
+    if ($privacyStatus !== '') {
+        $label = 'Privacy ' . $privacyStatus;
+        $titleParts[] = 'Privacy API status: ' . $privacyStatus;
+        if ($privacyEventType !== '') {
+            $titleParts[] = 'Latest event: ' . $privacyEventType;
+        }
+
+        switch ($privacyStatus) {
+            case 'SETTLED':
+                $badgeClass = 'text-bg-success';
+                $icon = 'bi-check-circle-fill';
+                break;
+            case 'PENDING':
+            case 'SETTLING':
+                $badgeClass = 'text-bg-warning';
+                $icon = 'bi-hourglass-split';
+                break;
+            case 'VOIDED':
+            case 'DECLINED':
+            case 'BOUNCED':
+            case 'EXPIRED':
+                $badgeClass = 'text-bg-danger';
+                $icon = 'bi-x-circle-fill';
+                break;
+            default:
+                $badgeClass = 'text-bg-secondary';
+                $icon = 'bi-question-circle';
+                break;
+        }
+    } elseif ($privacySyncStatus === 'active') {
+        $label = 'Privacy queued';
+        $badgeClass = 'text-bg-info';
+        $icon = 'bi-arrow-repeat';
+        $titleParts[] = 'Waiting for Privacy API status';
+    } elseif ($privacySyncStatus === 'error') {
+        $label = 'Privacy sync error';
+        $badgeClass = 'text-bg-danger';
+        $icon = 'bi-exclamation-triangle-fill';
+        $titleParts[] = 'Privacy sync error';
+    }
+
+    if ($privacySyncError !== '') {
+        $titleParts[] = $privacySyncError;
+    }
+    if ($fmPk !== '') {
+        $titleParts[] = 'Token: ' . $fmPk;
+    }
+
+    $title = implode(' | ', $titleParts);
+
+    return '<span class="badge privacy-status-badge ' . htmlspecialchars($badgeClass, ENT_QUOTES, 'UTF-8') . '"'
+        . ($title !== '' ? ' title="' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '"' : '')
+        . '><i class="bi ' . htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') . ' me-1"></i>'
+        . htmlspecialchars($label, ENT_QUOTES, 'UTF-8')
+        . '</span>';
 }
 
 $loginFlash = $_SESSION['login_flash'] ?? [];
@@ -282,6 +357,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       .stale-scheduled-row .tx-click-edit {
         opacity: 0.55;
       }
+      .privacy-status-badge {
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        vertical-align: middle;
+      }
+      .privacy-status-inline {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex-wrap: wrap;
+      }
     </style>
   </head>
   <body>
@@ -316,6 +403,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $pdo = get_mysql_connection();
             // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
             try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
+            try { privacy_ensure_sync_table($pdo); } catch (Throwable $e) { /* ignore if unavailable */ }
             $defaultOwner = budget_default_owner();
             budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
             budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
@@ -370,9 +458,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $recentOffset = ($recentPage - 1) * $recentLimit;
 
             $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
-                       t.account_id, a.name AS account_name
+                       t.account_id, t.fm_pk, a.name AS account_name,
+                       pts.latest_transaction_status AS privacy_status,
+                       pts.latest_event_type AS privacy_event_type,
+                       pts.sync_status AS privacy_sync_status,
+                       pts.last_error AS privacy_sync_error
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id
+                    LEFT JOIN privacy_transaction_sync pts ON pts.transaction_token = t.fm_pk
                     WHERE t.owner = ?';
             if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; }
             $sql .= ' ORDER BY COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) ASC, t.`date` DESC, t.updated_at DESC LIMIT ? OFFSET ?';
@@ -699,6 +792,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                         $staleScheduledClass = ($date !== '' && $date < $staleScheduledCutoff) ? 'stale-scheduled-row' : '';
+                        $privacyStatusBadge = budget_privacy_status_badge_html($row);
                       ?>
                       <?php
                         $dateCell = '';
@@ -714,7 +808,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
-                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">
+                          <span class="privacy-status-inline">
+                            <span>&nbsp;<?= htmlspecialchars((string)$desc) ?></span>
+                            <?= $privacyStatusBadge ?>
+                          </span>
+                        </td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
                           <div class="dropdown">
@@ -758,6 +857,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
+                        $privacyStatusBadge = budget_privacy_status_badge_html($row);
                       ?>
                       <?php
                         $dateCell = '';
@@ -773,7 +873,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
-                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
+                        <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">
+                          <span class="privacy-status-inline">
+                            <span>&nbsp;<?= htmlspecialchars((string)$desc) ?></span>
+                            <?= $privacyStatusBadge ?>
+                          </span>
+                        </td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
                           <div class="dropdown">
