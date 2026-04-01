@@ -472,6 +472,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                        pts.transaction_token AS privacy_token,
                        pts.latest_transaction_status AS privacy_status,
                        pts.latest_event_type AS privacy_event_type,
+                       pts.latest_result AS privacy_result,
+                       pts.latest_merchant_descriptor AS privacy_merchant_descriptor,
+                       pts.latest_created_at AS privacy_created_at,
+                       pts.latest_event_at AS privacy_event_at,
+                       pts.last_checked_at AS privacy_last_checked_at,
                        pts.sync_status AS privacy_sync_status,
                        pts.last_error AS privacy_sync_error
                     FROM transactions t
@@ -819,6 +824,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account="<?= htmlspecialchars((string)$acct) ?>"
                           data-description="<?= htmlspecialchars((string)$desc) ?>"
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                          data-privacy-token="<?= htmlspecialchars((string)($row['privacy_token'] ?? '')) ?>"
+                          data-privacy-status="<?= htmlspecialchars((string)($row['privacy_status'] ?? '')) ?>"
+                          data-privacy-event-type="<?= htmlspecialchars((string)($row['privacy_event_type'] ?? '')) ?>"
+                          data-privacy-result="<?= htmlspecialchars((string)($row['privacy_result'] ?? '')) ?>"
+                          data-privacy-merchant="<?= htmlspecialchars((string)($row['privacy_merchant_descriptor'] ?? '')) ?>"
+                          data-privacy-created-at="<?= htmlspecialchars((string)($row['privacy_created_at'] ?? '')) ?>"
+                          data-privacy-event-at="<?= htmlspecialchars((string)($row['privacy_event_at'] ?? '')) ?>"
+                          data-privacy-last-checked-at="<?= htmlspecialchars((string)($row['privacy_last_checked_at'] ?? '')) ?>"
+                          data-privacy-sync-status="<?= htmlspecialchars((string)($row['privacy_sync_status'] ?? '')) ?>"
+                          data-privacy-sync-error="<?= htmlspecialchars((string)($row['privacy_sync_error'] ?? '')) ?>"
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -881,6 +896,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-account="<?= htmlspecialchars((string)$acct) ?>"
                           data-description="<?= htmlspecialchars((string)$desc) ?>"
                           data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                          data-privacy-token="<?= htmlspecialchars((string)($row['privacy_token'] ?? '')) ?>"
+                          data-privacy-status="<?= htmlspecialchars((string)($row['privacy_status'] ?? '')) ?>"
+                          data-privacy-event-type="<?= htmlspecialchars((string)($row['privacy_event_type'] ?? '')) ?>"
+                          data-privacy-result="<?= htmlspecialchars((string)($row['privacy_result'] ?? '')) ?>"
+                          data-privacy-merchant="<?= htmlspecialchars((string)($row['privacy_merchant_descriptor'] ?? '')) ?>"
+                          data-privacy-created-at="<?= htmlspecialchars((string)($row['privacy_created_at'] ?? '')) ?>"
+                          data-privacy-event-at="<?= htmlspecialchars((string)($row['privacy_event_at'] ?? '')) ?>"
+                          data-privacy-last-checked-at="<?= htmlspecialchars((string)($row['privacy_last_checked_at'] ?? '')) ?>"
+                          data-privacy-sync-status="<?= htmlspecialchars((string)($row['privacy_sync_status'] ?? '')) ?>"
+                          data-privacy-sync-error="<?= htmlspecialchars((string)($row['privacy_sync_error'] ?? '')) ?>"
                           data-status="1"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -949,6 +974,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-account="<?= htmlspecialchars((string)$acct) ?>"
                         data-description="<?= htmlspecialchars((string)$desc) ?>"
                         data-check="<?= htmlspecialchars((string)($row['check_no'] ?? '')) ?>"
+                        data-privacy-token="<?= htmlspecialchars((string)($row['privacy_token'] ?? '')) ?>"
+                        data-privacy-status="<?= htmlspecialchars((string)($row['privacy_status'] ?? '')) ?>"
+                        data-privacy-event-type="<?= htmlspecialchars((string)($row['privacy_event_type'] ?? '')) ?>"
+                        data-privacy-result="<?= htmlspecialchars((string)($row['privacy_result'] ?? '')) ?>"
+                        data-privacy-merchant="<?= htmlspecialchars((string)($row['privacy_merchant_descriptor'] ?? '')) ?>"
+                        data-privacy-created-at="<?= htmlspecialchars((string)($row['privacy_created_at'] ?? '')) ?>"
+                        data-privacy-event-at="<?= htmlspecialchars((string)($row['privacy_event_at'] ?? '')) ?>"
+                        data-privacy-last-checked-at="<?= htmlspecialchars((string)($row['privacy_last_checked_at'] ?? '')) ?>"
+                        data-privacy-sync-status="<?= htmlspecialchars((string)($row['privacy_sync_status'] ?? '')) ?>"
+                        data-privacy-sync-error="<?= htmlspecialchars((string)($row['privacy_sync_error'] ?? '')) ?>"
                         data-status="2"
                         data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -1112,6 +1147,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   </select>
                 </div>
               </div>
+              <div class="border rounded p-3 bg-body-tertiary d-none" id="txPrivacyPanel">
+                <div class="small text-body-secondary text-uppercase fw-semibold mb-2">Privacy</div>
+                <div class="row g-2 small">
+                  <div class="col-6">
+                    <div class="text-body-secondary">Status</div>
+                    <div id="txPrivacyStatus">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Latest Event</div>
+                    <div id="txPrivacyEventType">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Result</div>
+                    <div id="txPrivacyResult">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Sync</div>
+                    <div id="txPrivacySyncStatus">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Merchant</div>
+                    <div id="txPrivacyMerchant">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Token</div>
+                    <div id="txPrivacyToken" class="font-monospace text-break">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Created</div>
+                    <div id="txPrivacyCreatedAt">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Last Event At</div>
+                    <div id="txPrivacyEventAt">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Last Checked</div>
+                    <div id="txPrivacyLastCheckedAt">-</div>
+                  </div>
+                  <div class="col-12 d-none" id="txPrivacyErrorWrap">
+                    <div class="text-body-secondary">Sync Error</div>
+                    <div id="txPrivacyError" class="text-danger text-break">-</div>
+                  </div>
+                </div>
+              </div>
               </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -1225,6 +1305,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const txAccountSuggestions = g('txAccountSuggestions');
         const txDescriptionInput = g('txDescription');
         const txDescriptionSuggestions = g('txDescriptionSuggestions');
+        const txPrivacyPanel = g('txPrivacyPanel');
+        const txPrivacyErrorWrap = g('txPrivacyErrorWrap');
         const hideSuggestions = (panel, state = null) => {
           if (!panel) return;
           panel.classList.add('d-none');
@@ -1233,6 +1315,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             state.matches = [];
             state.activeIndex = -1;
           }
+        };
+        const setText = (id, value, fallback = '-') => {
+          const el = g(id);
+          if (!el) return;
+          const text = (value || '').toString().trim();
+          el.textContent = text !== '' ? text : fallback;
+        };
+        const formatPrivacyTimestamp = (value) => {
+          const text = (value || '').toString().trim();
+          if (text === '') return '';
+          const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)
+            ? text.replace(' ', 'T') + 'Z'
+            : text;
+          const parsed = new Date(normalized);
+          if (Number.isNaN(parsed.getTime())) return text;
+          return parsed.toLocaleString([], {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          });
+        };
+        const resetPrivacyPanel = () => {
+          if (txPrivacyPanel) txPrivacyPanel.classList.add('d-none');
+          if (txPrivacyErrorWrap) txPrivacyErrorWrap.classList.add('d-none');
+          setText('txPrivacyStatus', '');
+          setText('txPrivacyEventType', '');
+          setText('txPrivacyResult', '');
+          setText('txPrivacySyncStatus', '');
+          setText('txPrivacyMerchant', '');
+          setText('txPrivacyToken', '');
+          setText('txPrivacyCreatedAt', '');
+          setText('txPrivacyEventAt', '');
+          setText('txPrivacyLastCheckedAt', '');
+          setText('txPrivacyError', '');
+        };
+        const showPrivacyPanelFromRow = (row) => {
+          const token = row?.dataset?.privacyToken || '';
+          const status = row?.dataset?.privacyStatus || '';
+          const eventType = row?.dataset?.privacyEventType || '';
+          const result = row?.dataset?.privacyResult || '';
+          const merchant = row?.dataset?.privacyMerchant || '';
+          const createdAt = row?.dataset?.privacyCreatedAt || '';
+          const eventAt = row?.dataset?.privacyEventAt || '';
+          const lastCheckedAt = row?.dataset?.privacyLastCheckedAt || '';
+          const syncStatus = row?.dataset?.privacySyncStatus || '';
+          const syncError = row?.dataset?.privacySyncError || '';
+          const hasPrivacyData = [token, status, eventType, result, merchant, createdAt, eventAt, lastCheckedAt, syncStatus, syncError]
+            .some((value) => (value || '').toString().trim() !== '');
+
+          resetPrivacyPanel();
+          if (!hasPrivacyData) return;
+
+          setText('txPrivacyStatus', status);
+          setText('txPrivacyEventType', eventType);
+          setText('txPrivacyResult', result);
+          setText('txPrivacySyncStatus', syncStatus);
+          setText('txPrivacyMerchant', merchant);
+          setText('txPrivacyToken', token);
+          setText('txPrivacyCreatedAt', formatPrivacyTimestamp(createdAt));
+          setText('txPrivacyEventAt', formatPrivacyTimestamp(eventAt));
+          setText('txPrivacyLastCheckedAt', formatPrivacyTimestamp(lastCheckedAt));
+          setText('txPrivacyError', syncError);
+          if (txPrivacyErrorWrap) {
+            txPrivacyErrorWrap.classList.toggle('d-none', (syncError || '').trim() === '');
+          }
+          if (txPrivacyPanel) txPrivacyPanel.classList.remove('d-none');
         };
         const syncSuggestionHighlight = (panel, activeIndex) => {
           if (!panel) return;
@@ -1389,6 +1539,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txCheck', row.dataset.check || '');
           const statusVal = row.dataset.status ?? '1';
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
+          showPrivacyPanelFromRow(row);
           modal && modal.show();
         }
         // Clickable cells open edit
@@ -1425,6 +1576,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txDescription','');
           setv('txCheck','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
+          resetPrivacyPanel();
           modal && modal.show();
         });
         const transferBtn = document.getElementById('transferBtn');
@@ -1486,6 +1638,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txDescription','');
           setv('txCheck','');
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
+          resetPrivacyPanel();
           modal && modal.show();
         });
 
