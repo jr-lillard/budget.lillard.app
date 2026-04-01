@@ -1,37 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once dirname(__DIR__) . '/util.php';
-
-function privacy_json_encode(mixed $value): string
-{
-    $json = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    if ($json === false) {
-        throw new RuntimeException('Unable to encode JSON payload.');
-    }
-    return $json;
-}
-
-function privacy_db_datetime_to_iso(?string $value): ?string
-{
-    $value = trim((string)$value);
-    if ($value === '') {
-        return null;
-    }
-    $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value, new DateTimeZone('UTC'));
-    if (!$dt instanceof DateTimeImmutable) {
-        return null;
-    }
-    return $dt->format('Y-m-d\TH:i:s\Z');
-}
-
-function privacy_amount_string(?int $amountMinor): ?string
-{
-    if ($amountMinor === null) {
-        return null;
-    }
-    return number_format($amountMinor / 100, 2, '.', '');
-}
+require_once dirname(__DIR__) . '/privacy.php';
 
 function privacy_finish_response(string $json): void
 {
@@ -49,266 +19,6 @@ function privacy_finish_response(string $json): void
 
     @ob_flush();
     flush();
-}
-
-function privacy_extract_latest_event(?array $decodedJson): ?array
-{
-    if (!is_array($decodedJson) || !isset($decodedJson['events']) || !is_array($decodedJson['events'])) {
-        return null;
-    }
-    $eventValues = array_values(array_filter($decodedJson['events'], 'is_array'));
-    if ($eventValues === []) {
-        return null;
-    }
-    return $eventValues[count($eventValues) - 1];
-}
-
-function privacy_extract_meta(?array $decodedJson): array
-{
-    $latestEvent = privacy_extract_latest_event($decodedJson);
-    $eventType = is_array($latestEvent) ? strtoupper(trim((string)($latestEvent['type'] ?? ''))) : '';
-    $eventToken = is_array($decodedJson) ? trim((string)($decodedJson['token'] ?? '')) : '';
-    $merchantDescriptor = is_array($decodedJson)
-        ? trim((string)($decodedJson['merchant']['descriptor'] ?? ''))
-        : '';
-    $amountMinor = (is_array($decodedJson) && isset($decodedJson['amount']) && is_numeric($decodedJson['amount']))
-        ? (int)round((float)$decodedJson['amount'])
-        : null;
-    $result = is_array($decodedJson) ? strtoupper(trim((string)($decodedJson['result'] ?? ''))) : '';
-
-    return [
-        'latest_event' => $latestEvent,
-        'event_type' => $eventType !== '' ? $eventType : null,
-        'transaction_token' => $eventToken !== '' ? $eventToken : null,
-        'merchant_descriptor' => $merchantDescriptor !== '' ? $merchantDescriptor : null,
-        'amount_minor' => $amountMinor,
-        'result' => $result !== '' ? $result : null,
-    ];
-}
-
-function privacy_ensure_webhooks_table(PDO $pdo): void
-{
-    $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS privacy_webhooks (
-            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            provider VARCHAR(32) NOT NULL DEFAULT "privacy",
-            environment VARCHAR(32) NOT NULL DEFAULT "dev",
-            received_at DATETIME NOT NULL,
-            process_started_at DATETIME NULL,
-            processed_at DATETIME NULL,
-            host VARCHAR(255) NOT NULL,
-            method VARCHAR(16) NOT NULL,
-            request_uri VARCHAR(255) NOT NULL,
-            remote_addr VARCHAR(64) DEFAULT NULL,
-            content_type VARCHAR(255) DEFAULT NULL,
-            body_bytes INT UNSIGNED NOT NULL DEFAULT 0,
-            transaction_token VARCHAR(64) DEFAULT NULL,
-            event_type VARCHAR(64) DEFAULT NULL,
-            result VARCHAR(64) DEFAULT NULL,
-            merchant_descriptor VARCHAR(255) DEFAULT NULL,
-            amount_minor INT DEFAULT NULL,
-            processing_status VARCHAR(32) NOT NULL DEFAULT "received",
-            processing_attempts INT UNSIGNED NOT NULL DEFAULT 0,
-            processing_error TEXT DEFAULT NULL,
-            import_action VARCHAR(64) DEFAULT NULL,
-            transaction_id INT UNSIGNED DEFAULT NULL,
-            import_summary_json LONGTEXT DEFAULT NULL,
-            email_ok TINYINT(1) DEFAULT NULL,
-            email_error TEXT DEFAULT NULL,
-            email_sent_at DATETIME DEFAULT NULL,
-            headers_json LONGTEXT DEFAULT NULL,
-            body_json LONGTEXT DEFAULT NULL,
-            body_text LONGTEXT DEFAULT NULL,
-            body_base64 LONGTEXT DEFAULT NULL,
-            created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            KEY idx_received_at (received_at),
-            KEY idx_processing_status (processing_status),
-            KEY idx_transaction_token (transaction_token),
-            KEY idx_event_type (event_type)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-    );
-}
-
-function privacy_fetch_webhook(PDO $pdo, int $id): ?array
-{
-    $stmt = $pdo->prepare('SELECT * FROM privacy_webhooks WHERE id = :id LIMIT 1');
-    $stmt->execute([':id' => $id]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $row ?: null;
-}
-
-function privacy_render_webhook_row(array $row, string $allowedHost, string $scriptPath): array
-{
-    $headers = json_decode((string)($row['headers_json'] ?? ''), true);
-    $bodyJson = json_decode((string)($row['body_json'] ?? ''), true);
-    $importSummary = json_decode((string)($row['import_summary_json'] ?? ''), true);
-    if (is_array($importSummary) && array_key_exists('email_notification', $importSummary)) {
-        unset($importSummary['email_notification']);
-    }
-    $id = (int)($row['id'] ?? 0);
-
-    return [
-        'id' => $id,
-        'provider' => $row['provider'] ?? 'privacy',
-        'environment' => $row['environment'] ?? 'dev',
-        'received_at' => privacy_db_datetime_to_iso($row['received_at'] ?? null),
-        'process_started_at' => privacy_db_datetime_to_iso($row['process_started_at'] ?? null),
-        'processed_at' => privacy_db_datetime_to_iso($row['processed_at'] ?? null),
-        'processing_status' => $row['processing_status'] ?? null,
-        'processing_attempts' => isset($row['processing_attempts']) ? (int)$row['processing_attempts'] : null,
-        'processing_error' => $row['processing_error'] ?? null,
-        'host' => $row['host'] ?? null,
-        'method' => $row['method'] ?? null,
-        'request_uri' => $row['request_uri'] ?? null,
-        'remote_addr' => $row['remote_addr'] ?? null,
-        'content_type' => $row['content_type'] ?? null,
-        'body_bytes' => isset($row['body_bytes']) ? (int)$row['body_bytes'] : null,
-        'event_type' => $row['event_type'] ?? null,
-        'event_token' => $row['transaction_token'] ?? null,
-        'merchant' => $row['merchant_descriptor'] ?? null,
-        'amount' => isset($row['amount_minor']) ? privacy_amount_string((int)$row['amount_minor']) : null,
-        'result' => $row['result'] ?? null,
-        'import_action' => $row['import_action'] ?? null,
-        'transaction_id' => isset($row['transaction_id']) ? (int)$row['transaction_id'] : null,
-        'headers' => is_array($headers) ? $headers : null,
-        'body_json' => is_array($bodyJson) ? $bodyJson : null,
-        'body_text' => $row['body_text'] ?? null,
-        'body_base64' => $row['body_base64'] ?? null,
-        'import_summary' => is_array($importSummary) ? $importSummary : null,
-        'record_url' => 'https://' . $allowedHost . $scriptPath . '?id=' . $id,
-    ];
-}
-
-function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, string $importOwner, int $importAccountId): array
-{
-    $meta = privacy_extract_meta($decodedJson);
-    $eventType = (string)($meta['event_type'] ?? '');
-    $eventToken = (string)($meta['transaction_token'] ?? '');
-
-    $importSummary = [
-        'attempted' => false,
-        'ok' => null,
-        'action' => 'ignored',
-        'reason' => null,
-        'event_type' => $eventType !== '' ? $eventType : null,
-        'transaction_token' => $eventToken !== '' ? $eventToken : null,
-        'transaction_id' => null,
-    ];
-
-    if (!is_array($decodedJson) || $eventToken === '') {
-        $importSummary['ok'] = true;
-        $importSummary['reason'] = 'Missing transaction payload or token';
-        return $importSummary;
-    }
-
-    $importSummary['attempted'] = true;
-
-    try {
-        try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore */ }
-        budget_ensure_owner_column($pdo, 'transactions', 'owner', budget_default_owner());
-        try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
-
-        $owner = budget_canonical_user($importOwner);
-        $existingStmt = $pdo->prepare('SELECT id, status FROM transactions WHERE fm_pk = :fm_pk LIMIT 1');
-        $existingStmt->execute([':fm_pk' => $eventToken]);
-        $existingTx = $existingStmt->fetch(PDO::FETCH_ASSOC) ?: null;
-        $existingId = (int)($existingTx['id'] ?? 0);
-        $existingStatus = (int)($existingTx['status'] ?? 0);
-
-        if ($eventType === 'VOID') {
-            if ($existingId > 0 && $existingStatus !== 2) {
-                $deleteStmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id LIMIT 1');
-                $deleteStmt->execute([':id' => $existingId]);
-                $importSummary['ok'] = true;
-                $importSummary['action'] = 'deleted';
-                $importSummary['transaction_id'] = $existingId;
-            } elseif ($existingId > 0) {
-                $importSummary['ok'] = true;
-                $importSummary['action'] = 'preserved_posted';
-                $importSummary['reason'] = 'Existing row already posted; leaving it unchanged';
-                $importSummary['transaction_id'] = $existingId;
-            } else {
-                $importSummary['ok'] = true;
-                $importSummary['reason'] = 'VOID received for unknown transaction token';
-            }
-            return $importSummary;
-        }
-
-        if (strtoupper(trim((string)($decodedJson['result'] ?? ''))) !== 'APPROVED') {
-            $importSummary['ok'] = true;
-            $importSummary['reason'] = 'Only APPROVED transactions are imported';
-            return $importSummary;
-        }
-
-        if (!in_array($eventType, ['AUTHORIZATION', 'AUTH_ADVICE', 'CLEARING', 'RETURN'], true)) {
-            $importSummary['ok'] = true;
-            $importSummary['reason'] = 'Unsupported event type';
-            return $importSummary;
-        }
-
-        $createdAt = (string)($decodedJson['created'] ?? '');
-        $date = preg_match('/^\d{4}-\d{2}-\d{2}/', $createdAt) === 1 ? substr($createdAt, 0, 10) : gmdate('Y-m-d');
-        $descriptor = trim((string)($decodedJson['merchant']['descriptor'] ?? ''));
-        $description = $descriptor !== ''
-            ? budget_apply_privacy_description_rule($pdo, $owner, $descriptor)
-            : 'Privacy Card Transaction';
-        $amountMinor = abs((int)round((float)($decodedJson['amount'] ?? 0)));
-        $sign = ($eventType === 'RETURN') ? 1 : -1;
-        $amount = number_format(($sign * $amountMinor) / 100, 2, '.', '');
-
-        if ($existingId > 0) {
-            if ($existingStatus === 2) {
-                $importSummary['ok'] = true;
-                $importSummary['action'] = 'preserved_posted';
-                $importSummary['reason'] = 'Existing row already posted; leaving it unchanged';
-                $importSummary['transaction_id'] = $existingId;
-            } else {
-                $updateStmt = $pdo->prepare(
-                    'UPDATE transactions
-                     SET account_id = :account_id,
-                         `date` = :date,
-                         amount = :amount,
-                         description = :description,
-                         updated_at_source = NOW()
-                     WHERE id = :id'
-                );
-                $updateStmt->execute([
-                    ':account_id' => $importAccountId,
-                    ':date' => $date,
-                    ':amount' => $amount,
-                    ':description' => $description,
-                    ':id' => $existingId,
-                ]);
-                $importSummary['ok'] = true;
-                $importSummary['action'] = 'updated';
-                $importSummary['transaction_id'] = $existingId;
-            }
-            return $importSummary;
-        }
-
-        $insertStmt = $pdo->prepare(
-            'INSERT INTO transactions (fm_pk, account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
-             VALUES (:fm_pk, :account_id, :date, :amount, :description, NULL, 0, 0, :owner, NOW(), NOW())'
-        );
-        $insertStmt->execute([
-            ':fm_pk' => $eventToken,
-            ':account_id' => $importAccountId,
-            ':date' => $date,
-            ':amount' => $amount,
-            ':description' => $description,
-            ':owner' => $owner,
-        ]);
-        $importSummary['ok'] = true;
-        $importSummary['action'] = 'inserted';
-        $importSummary['transaction_id'] = (int)$pdo->lastInsertId();
-        return $importSummary;
-    } catch (Throwable $e) {
-        $importSummary['ok'] = false;
-        $importSummary['action'] = 'error';
-        $importSummary['reason'] = $e->getMessage();
-        return $importSummary;
-    }
 }
 
 // Dev-only webhook receiver for testing Privacy deliveries.
@@ -368,6 +78,7 @@ $respond = static function (array $payload, int $status = 200) use ($method): vo
 try {
     $pdo = get_mysql_connection();
     privacy_ensure_webhooks_table($pdo);
+    privacy_ensure_sync_table($pdo);
 } catch (Throwable $e) {
     $respond(['ok' => false, 'error' => 'Unable to connect to MySQL webhook store', 'detail' => $e->getMessage()], 500);
 }
@@ -504,6 +215,7 @@ try {
     $markStmt->execute([':id' => $webhookId]);
 
     $importSummary = privacy_process_transaction_import($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId);
+    privacy_record_sync_result($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId, $importSummary, $webhookId);
 
     $processingNotes = [];
     if ($importSummary['ok'] === false && !empty($importSummary['reason'])) {
@@ -541,6 +253,16 @@ try {
     ]);
 } catch (Throwable $e) {
     try {
+        privacy_upsert_sync_record(
+            $pdo,
+            is_array($decodedJson) ? $decodedJson : null,
+            $importOwner,
+            $importAccountId,
+            null,
+            $webhookId,
+            'active',
+            $e->getMessage()
+        );
         $failStmt = $pdo->prepare(
             'UPDATE privacy_webhooks
              SET processed_at = NOW(),

@@ -4,13 +4,29 @@ declare(strict_types=1);
 /**
  * Load configuration and provide a PDO connection to MySQL.
  */
+function budget_get_config(): array
+{
+    static $config = null;
+    if (is_array($config)) {
+        return $config;
+    }
+
+    $loaded = require __DIR__ . '/config.php';
+    if (!is_array($loaded)) {
+        throw new RuntimeException('Application configuration missing.');
+    }
+
+    $config = $loaded;
+    return $config;
+}
+
 function get_mysql_connection(): PDO
 {
     static $pdo = null;
     if ($pdo instanceof PDO) {
         return $pdo;
     }
-    $config = require __DIR__ . '/config.php';
+    $config = budget_get_config();
     $db = $config['db'] ?? null;
     if (!is_array($db)) {
         throw new RuntimeException('Database configuration missing.');
