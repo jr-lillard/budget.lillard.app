@@ -104,13 +104,13 @@ function budget_redirect(string $target, array $afterResponseTasks = []): void
 
 function budget_privacy_status_cell_html(array $row): string
 {
-    $fmPk = trim((string)($row['fm_pk'] ?? ''));
+    $privacyToken = trim((string)($row['privacy_token'] ?? ''));
     $privacyStatus = strtoupper(trim((string)($row['privacy_status'] ?? '')));
     $privacyEventType = strtoupper(trim((string)($row['privacy_event_type'] ?? '')));
     $privacySyncStatus = strtolower(trim((string)($row['privacy_sync_status'] ?? '')));
     $privacySyncError = trim((string)($row['privacy_sync_error'] ?? ''));
 
-    if ($fmPk === '' && $privacyStatus === '' && $privacySyncStatus === '') {
+    if ($privacyToken === '' && $privacyStatus === '' && $privacySyncStatus === '') {
         return '';
     }
 
@@ -156,8 +156,8 @@ function budget_privacy_status_cell_html(array $row): string
     if ($privacySyncError !== '') {
         $titleParts[] = $privacySyncError;
     }
-    if ($fmPk !== '') {
-        $titleParts[] = 'Token: ' . $fmPk;
+    if ($privacyToken !== '') {
+        $titleParts[] = 'Token: ' . $privacyToken;
     }
 
     $title = implode(' | ', $titleParts);
@@ -469,6 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
             $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
                        t.account_id, t.fm_pk, a.name AS account_name,
+                       pts.transaction_token AS privacy_token,
                        pts.latest_transaction_status AS privacy_status,
                        pts.latest_event_type AS privacy_event_type,
                        pts.sync_status AS privacy_sync_status,
