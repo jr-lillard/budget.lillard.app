@@ -24,7 +24,7 @@ function privacy_finish_response(string $json): void
 $scriptPath = (string)($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? basename(__FILE__));
 $scriptPath = '/' . basename($scriptPath);
 
-$receiverConfigs = [
+$defaultReceiverConfigs = [
     'budget.lillard.dev' => [
         'environment' => 'dev',
         'receiver' => 'privacy webhook dev',
@@ -35,8 +35,16 @@ $receiverConfigs = [
     ],
 ];
 
-$importOwner = 'jr@lillard.org';
-$importAccountId = 1; // Meritrust Credit Union Personal Checking
+$receiverConfigs = (isset($privacyWebhookReceiverConfigs) && is_array($privacyWebhookReceiverConfigs))
+    ? $privacyWebhookReceiverConfigs
+    : $defaultReceiverConfigs;
+
+$importOwner = isset($privacyWebhookImportOwner)
+    ? (string)$privacyWebhookImportOwner
+    : 'jr@lillard.org';
+$importAccountId = isset($privacyWebhookImportAccountId)
+    ? (int)$privacyWebhookImportAccountId
+    : 1; // Meritrust Credit Union Personal Checking
 
 $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
 $host = preg_replace('/:\d+$/', '', $host);
