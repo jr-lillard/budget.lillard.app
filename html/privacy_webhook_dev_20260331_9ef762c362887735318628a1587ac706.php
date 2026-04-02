@@ -3,99 +3,6 @@ declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/privacy.php';
 
-function privacy_header_value(array $headers, string $name): ?string
-{
-    foreach ($headers as $headerName => $value) {
-        if (strcasecmp((string)$headerName, $name) === 0) {
-            $stringValue = trim((string)$value);
-            return $stringValue !== '' ? $stringValue : null;
-        }
-    }
-
-    return null;
-}
-
-function privacy_request_was_forwarded(array $headers): bool
-{
-    return privacy_header_value($headers, 'X-Budget-Privacy-Forwarded') !== null;
-}
-
-function privacy_forward_webhook_to_peer(
-    string $targetUrl,
-    array $headers,
-    string $body,
-    string $sourceEnvironment,
-    string $sourceHost
-): array {
-    if (!function_exists('curl_init')) {
-        return [
-            'attempted' => true,
-            'ok' => false,
-            'error' => 'The PHP cURL extension is required to forward the webhook.',
-        ];
-    }
-
-    $contentType = privacy_header_value($headers, 'Content-Type') ?? 'application/json';
-    $forwardHeaders = [
-        'Accept: application/json',
-        'Content-Type: ' . $contentType,
-        'User-Agent: budget.lillard.app/privacy-webhook-forwarder/' . privacy_normalize_environment($sourceEnvironment),
-        'X-Budget-Privacy-Forwarded: ' . privacy_normalize_environment($sourceEnvironment),
-        'X-Budget-Privacy-Source-Host: ' . $sourceHost,
-    ];
-
-    $privacyHmac = privacy_header_value($headers, 'X-Privacy-Hmac');
-    if ($privacyHmac !== null) {
-        $forwardHeaders[] = 'X-Privacy-Hmac: ' . $privacyHmac;
-    }
-
-    $ch = curl_init($targetUrl);
-    if ($ch === false) {
-        return [
-            'attempted' => true,
-            'ok' => false,
-            'error' => 'Unable to initialize cURL for prod forward.',
-        ];
-    }
-
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $body,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => $forwardHeaders,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 20,
-    ]);
-
-    $responseBody = curl_exec($ch);
-    if ($responseBody === false) {
-        $error = curl_error($ch);
-        curl_close($ch);
-        return [
-            'attempted' => true,
-            'ok' => false,
-            'error' => 'Prod forward failed: ' . $error,
-        ];
-    }
-
-    $statusCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-    curl_close($ch);
-
-    $decoded = json_decode((string)$responseBody, true);
-    $response = is_array($decoded) ? $decoded : null;
-
-    return [
-        'attempted' => true,
-        'ok' => $statusCode >= 200 && $statusCode < 300 && is_array($response) && (($response['ok'] ?? false) === true),
-        'http_status' => $statusCode,
-        'response_webhook_id' => is_array($response) && isset($response['webhook_id']) ? (int)$response['webhook_id'] : null,
-        'response_record_url' => is_array($response) ? ($response['record_url'] ?? null) : null,
-        'error' => ($statusCode >= 200 && $statusCode < 300)
-            ? null
-            : ('Prod receiver returned HTTP ' . $statusCode),
-    ];
-}
-
 function privacy_finish_response(string $json): void
 {
     ignore_user_abort(true);
@@ -121,12 +28,10 @@ $receiverConfigs = [
     'budget.lillard.dev' => [
         'environment' => 'dev',
         'receiver' => 'privacy webhook dev',
-        'forward_target_url' => 'https://budget.lillard.app' . $scriptPath,
     ],
     'budget.lillard.app' => [
         'environment' => 'prod',
         'receiver' => 'privacy webhook prod',
-        'forward_target_url' => null,
     ],
 ];
 
@@ -144,7 +49,6 @@ if (!is_array($receiverConfig)) {
 }
 $environment = privacy_normalize_environment((string)($receiverConfig['environment'] ?? 'dev'));
 $receiverName = (string)($receiverConfig['receiver'] ?? ('privacy webhook ' . $environment));
-$forwardTargetUrl = $receiverConfig['forward_target_url'] ?? null;
 $postUrl = 'https://' . $host . $scriptPath;
 
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
@@ -333,7 +237,6 @@ try {
         'reason' => null,
         'transaction_id' => null,
     ];
-    $forwardSummary = null;
 
     try {
         $importSummary = privacy_process_transaction_import($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId);
@@ -373,27 +276,12 @@ try {
     if ($importSummary['ok'] === false && !empty($importSummary['reason'])) {
         $processingNotes[] = 'Import: ' . (string)$importSummary['reason'];
     }
-
-    if (
-        $environment === 'dev'
-        && $method === 'POST'
-        && is_string($forwardTargetUrl)
-        && $forwardTargetUrl !== ''
-        && !privacy_request_was_forwarded($headers)
-    ) {
-        $forwardSummary = privacy_forward_webhook_to_peer($forwardTargetUrl, $headers, $body, $environment, $host);
-        if (($forwardSummary['ok'] ?? false) !== true) {
-            $processingNotes[] = 'Prod forward: ' . (string)($forwardSummary['error'] ?? 'Unknown forward failure');
-        }
-    }
-
     $processingStatus = ($importSummary['ok'] === false)
         ? 'error'
         : (($processingNotes !== []) ? 'warning' : 'processed');
     $processingError = $processingNotes !== [] ? implode(' | ', $processingNotes) : null;
     $summaryJson = privacy_json_encode([
         'import_transaction' => $importSummary,
-        'forward_to_prod' => $forwardSummary,
     ]);
 
     $finalizeStmt = $pdo->prepare(
