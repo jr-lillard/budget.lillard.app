@@ -9,10 +9,12 @@ if (PHP_SAPI !== 'cli') {
 
 require_once dirname(__DIR__, 2) . '/privacy.php';
 
-$options = getopt('', ['dry-run', 'limit::', 'begin::']);
+$options = getopt('', ['dry-run', 'limit::', 'begin::', 'environment::']);
 $dryRun = array_key_exists('dry-run', $options);
 $limit = isset($options['limit']) ? max(1, min((int)$options['limit'], 250)) : 50;
 $beginDate = isset($options['begin']) ? trim((string)$options['begin']) : gmdate('Y-m-d', strtotime('-365 days'));
+$environmentOption = isset($options['environment']) ? trim((string)$options['environment']) : trim((string)getenv('BUDGET_PRIVACY_ENVIRONMENT'));
+$environment = privacy_normalize_environment($environmentOption !== '' ? $environmentOption : 'dev');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $beginDate)) {
     fwrite(STDERR, "Invalid --begin value. Expected YYYY-MM-DD.\n");
     exit(1);
@@ -25,17 +27,18 @@ try {
     $pdo = get_mysql_connection();
     privacy_ensure_sync_table($pdo);
     $apiKey = privacy_api_get_key();
-    $apiTransactionsByToken = privacy_api_list_transactions($apiKey, $beginDate);
+    $apiTransactionsByToken = privacy_api_list_transactions($apiKey, $beginDate, 1000, 25, $environment);
 } catch (Throwable $e) {
     fwrite(STDERR, 'Privacy sync bootstrap failed: ' . $e->getMessage() . "\n");
     exit(1);
 }
 
-$bootstrapped = privacy_bootstrap_sync_rows_from_api($pdo, $apiTransactionsByToken, $owner, $accountId);
-$dueRows = privacy_fetch_due_sync_rows($pdo, $limit);
+$bootstrapped = privacy_bootstrap_sync_rows_from_api($pdo, $apiTransactionsByToken, $owner, $accountId, $environment);
+$dueRows = privacy_fetch_due_sync_rows($pdo, $limit, $environment);
 
 $summary = [
     'dry_run' => $dryRun,
+    'environment' => $environment,
     'begin' => $beginDate,
     'api_transactions' => count($apiTransactionsByToken),
     'bootstrapped' => $bootstrapped,
@@ -64,7 +67,7 @@ foreach ($dueRows as $row) {
         $txState = privacy_fetch_open_transaction_state($pdo, $transactionId);
         if (is_array($txState) && (int)($txState['status_norm'] ?? 0) === 2) {
             if (!$dryRun) {
-                privacy_mark_sync_complete($pdo, $token);
+                privacy_mark_sync_complete($pdo, $token, 'Budget transaction already posted', $environment);
             }
             $summary['completed']++;
             echo privacy_json_encode([
@@ -79,7 +82,7 @@ foreach ($dueRows as $row) {
     $payload = $apiTransactionsByToken[$token] ?? null;
     if (!is_array($payload)) {
         if (!$dryRun) {
-            privacy_mark_sync_not_found($pdo, $token, 'Transaction not found in Privacy API snapshot');
+            privacy_mark_sync_not_found($pdo, $token, 'Transaction not found in Privacy API snapshot', $environment);
         }
         $summary['missing']++;
         echo privacy_json_encode([
@@ -100,7 +103,7 @@ foreach ($dueRows as $row) {
         : privacy_process_transaction_import($pdo, $payload, $owner, $accountId);
 
     if (!$dryRun) {
-        privacy_record_sync_result($pdo, $payload, $owner, $accountId, $importSummary, null);
+        privacy_record_sync_result($pdo, $payload, $owner, $accountId, $importSummary, null, $environment);
     }
 
     $summary['processed']++;

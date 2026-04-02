@@ -49,6 +49,27 @@ function privacy_amount_string(?int $amountMinor): ?string
     return number_format($amountMinor / 100, 2, '.', '');
 }
 
+function privacy_normalize_environment(?string $environment, string $fallback = 'dev'): string
+{
+    $environment = strtolower(trim((string)$environment));
+    if ($environment === '') {
+        return strtolower(trim($fallback)) !== '' ? strtolower(trim($fallback)) : 'dev';
+    }
+
+    $normalized = preg_replace('/[^a-z0-9_-]+/', '-', $environment);
+    $normalized = trim((string)$normalized, '-');
+    if ($normalized === '') {
+        return strtolower(trim($fallback)) !== '' ? strtolower(trim($fallback)) : 'dev';
+    }
+
+    return $normalized;
+}
+
+function privacy_api_user_agent(?string $environment = null): string
+{
+    return 'budget.lillard.app/privacy-sync/' . privacy_normalize_environment($environment, 'app');
+}
+
 function privacy_extract_latest_event(?array $decodedJson): ?array
 {
     if (!is_array($decodedJson) || !isset($decodedJson['events']) || !is_array($decodedJson['events'])) {
@@ -96,7 +117,7 @@ function privacy_ensure_webhooks_table(PDO $pdo): void
         'CREATE TABLE IF NOT EXISTS privacy_webhooks (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             provider VARCHAR(32) NOT NULL DEFAULT "privacy",
-            environment VARCHAR(32) NOT NULL DEFAULT "dev",
+            environment VARCHAR(32) NOT NULL DEFAULT "unknown",
             received_at DATETIME NOT NULL,
             process_started_at DATETIME NULL,
             processed_at DATETIME NULL,
@@ -140,7 +161,7 @@ function privacy_ensure_sync_table(PDO $pdo): void
         'CREATE TABLE IF NOT EXISTS privacy_transaction_sync (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             provider VARCHAR(32) NOT NULL DEFAULT "privacy",
-            environment VARCHAR(32) NOT NULL DEFAULT "dev",
+            environment VARCHAR(32) NOT NULL DEFAULT "unknown",
             owner VARCHAR(190) NOT NULL,
             account_id INT UNSIGNED DEFAULT NULL,
             transaction_token VARCHAR(64) NOT NULL,
@@ -373,10 +394,19 @@ function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, strin
     }
 }
 
-function privacy_fetch_webhook(PDO $pdo, int $id): ?array
+function privacy_fetch_webhook(PDO $pdo, int $id, ?string $environment = null): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM privacy_webhooks WHERE id = :id LIMIT 1');
-    $stmt->execute([':id' => $id]);
+    $environment = trim((string)$environment);
+    if ($environment === '') {
+        $stmt = $pdo->prepare('SELECT * FROM privacy_webhooks WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $id]);
+    } else {
+        $stmt = $pdo->prepare('SELECT * FROM privacy_webhooks WHERE id = :id AND environment = :environment LIMIT 1');
+        $stmt->execute([
+            ':id' => $id,
+            ':environment' => privacy_normalize_environment($environment),
+        ]);
+    }
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
 }
@@ -431,7 +461,8 @@ function privacy_upsert_sync_record(
     ?int $transactionId = null,
     ?int $webhookId = null,
     ?string $syncStatusOverride = null,
-    ?string $lastError = null
+    ?string $lastError = null,
+    string $environment = 'dev'
 ): void {
     $meta = privacy_extract_meta($decodedJson);
     $token = trim((string)($meta['transaction_token'] ?? ''));
@@ -440,6 +471,7 @@ function privacy_upsert_sync_record(
     }
 
     privacy_ensure_sync_table($pdo);
+    $environment = privacy_normalize_environment($environment);
 
     $status = strtoupper(trim((string)($meta['status'] ?? '')));
     $syncStatus = $syncStatusOverride;
@@ -457,12 +489,13 @@ function privacy_upsert_sync_record(
             latest_amount_minor, latest_merchant_descriptor, latest_payload_json,
             sync_status, next_check_at, completed_at, last_error
         ) VALUES (
-            "privacy", "dev", :owner, :account_id, :transaction_token, :transaction_id, :last_webhook_id,
+            "privacy", :environment, :owner, :account_id, :transaction_token, :transaction_id, :last_webhook_id,
             :latest_transaction_status, :latest_result, :latest_event_type, :latest_created_at, :latest_event_at,
             :latest_amount_minor, :latest_merchant_descriptor, :latest_payload_json,
             :sync_status, :next_check_at, :completed_at, :last_error
         )
         ON DUPLICATE KEY UPDATE
+            environment = VALUES(environment),
             owner = VALUES(owner),
             account_id = VALUES(account_id),
             transaction_id = COALESCE(VALUES(transaction_id), transaction_id),
@@ -484,6 +517,7 @@ function privacy_upsert_sync_record(
             last_error = VALUES(last_error)'
     );
     $stmt->execute([
+        ':environment' => $environment,
         ':owner' => budget_canonical_user($owner),
         ':account_id' => $accountId > 0 ? $accountId : null,
         ':transaction_token' => $token,
@@ -510,7 +544,8 @@ function privacy_record_sync_result(
     string $owner,
     int $accountId,
     array $importSummary,
-    ?int $webhookId = null
+    ?int $webhookId = null,
+    string $environment = 'dev'
 ): void {
     $meta = privacy_extract_meta($decodedJson);
     $token = trim((string)($meta['transaction_token'] ?? ''));
@@ -519,6 +554,7 @@ function privacy_record_sync_result(
     }
 
     privacy_ensure_sync_table($pdo);
+    $environment = privacy_normalize_environment($environment);
 
     $status = strtoupper(trim((string)($meta['status'] ?? '')));
     $isComplete = privacy_is_terminal_status($status)
@@ -531,7 +567,8 @@ function privacy_record_sync_result(
 
     $stmt = $pdo->prepare(
         'UPDATE privacy_transaction_sync
-         SET owner = :owner,
+         SET environment = :environment,
+             owner = :owner,
              account_id = :account_id,
              transaction_id = COALESCE(:transaction_id, transaction_id),
              last_webhook_id = COALESCE(:last_webhook_id, last_webhook_id),
@@ -553,6 +590,7 @@ function privacy_record_sync_result(
          WHERE transaction_token = :transaction_token'
     );
     $stmt->execute([
+        ':environment' => $environment,
         ':owner' => budget_canonical_user($owner),
         ':account_id' => $accountId > 0 ? $accountId : null,
         ':transaction_id' => ($transactionId !== null && $transactionId > 0) ? $transactionId : null,
@@ -573,7 +611,7 @@ function privacy_record_sync_result(
     ]);
 
     if ($stmt->rowCount() === 0) {
-        privacy_upsert_sync_record($pdo, $decodedJson, $owner, $accountId, $transactionId, $webhookId, $syncStatus, $lastError);
+        privacy_upsert_sync_record($pdo, $decodedJson, $owner, $accountId, $transactionId, $webhookId, $syncStatus, $lastError, $environment);
         if ($syncStatus === 'complete' || $lastError !== null) {
             $touchStmt = $pdo->prepare(
                 'UPDATE privacy_transaction_sync
@@ -587,9 +625,10 @@ function privacy_record_sync_result(
     }
 }
 
-function privacy_mark_sync_not_found(PDO $pdo, string $transactionToken, string $message): void
+function privacy_mark_sync_not_found(PDO $pdo, string $transactionToken, string $message, string $environment = 'dev'): void
 {
     privacy_ensure_sync_table($pdo);
+    $environment = privacy_normalize_environment($environment);
 
     $stmt = $pdo->prepare(
         'UPDATE privacy_transaction_sync
@@ -599,18 +638,26 @@ function privacy_mark_sync_not_found(PDO $pdo, string $transactionToken, string 
              last_error = :last_error,
              sync_status = CASE WHEN not_found_attempts + 1 >= 5 THEN "error" ELSE "active" END,
              next_check_at = CASE WHEN not_found_attempts + 1 >= 5 THEN NULL ELSE :next_check_at END
-         WHERE transaction_token = :transaction_token'
+         WHERE transaction_token = :transaction_token
+           AND environment = :environment'
     );
     $stmt->execute([
         ':last_error' => $message,
         ':next_check_at' => privacy_next_check_at(null, 60),
         ':transaction_token' => $transactionToken,
+        ':environment' => $environment,
     ]);
 }
 
-function privacy_mark_sync_complete(PDO $pdo, string $transactionToken, string $reason = 'Budget transaction already posted'): void
+function privacy_mark_sync_complete(
+    PDO $pdo,
+    string $transactionToken,
+    string $reason = 'Budget transaction already posted',
+    string $environment = 'dev'
+): void
 {
     privacy_ensure_sync_table($pdo);
+    $environment = privacy_normalize_environment($environment);
 
     $stmt = $pdo->prepare(
         'UPDATE privacy_transaction_sync
@@ -619,27 +666,32 @@ function privacy_mark_sync_complete(PDO $pdo, string $transactionToken, string $
              completed_at = COALESCE(completed_at, NOW()),
              last_checked_at = NOW(),
              last_error = :last_error
-         WHERE transaction_token = :transaction_token'
+         WHERE transaction_token = :transaction_token
+           AND environment = :environment'
     );
     $stmt->execute([
         ':last_error' => $reason,
         ':transaction_token' => $transactionToken,
+        ':environment' => $environment,
     ]);
 }
 
-function privacy_fetch_due_sync_rows(PDO $pdo, int $limit = 25): array
+function privacy_fetch_due_sync_rows(PDO $pdo, int $limit = 25, string $environment = 'dev'): array
 {
     privacy_ensure_sync_table($pdo);
     $limit = max(1, min($limit, 250));
+    $environment = privacy_normalize_environment($environment);
 
     $stmt = $pdo->prepare(
         'SELECT *
          FROM privacy_transaction_sync
-         WHERE sync_status = "active"
+         WHERE environment = :environment
+           AND sync_status = "active"
            AND (next_check_at IS NULL OR next_check_at <= NOW())
          ORDER BY COALESCE(next_check_at, created_at) ASC, id ASC
          LIMIT :limit'
     );
+    $stmt->bindValue(':environment', $environment, PDO::PARAM_STR);
     $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
     $stmt->execute();
     return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -660,13 +712,20 @@ function privacy_fetch_open_transaction_state(PDO $pdo, int $transactionId): ?ar
     return $row ?: null;
 }
 
-function privacy_bootstrap_sync_rows_from_api(PDO $pdo, array $apiTransactionsByToken, string $owner, int $accountId): int
+function privacy_bootstrap_sync_rows_from_api(
+    PDO $pdo,
+    array $apiTransactionsByToken,
+    string $owner,
+    int $accountId,
+    string $environment = 'dev'
+): int
 {
     if ($apiTransactionsByToken === []) {
         return 0;
     }
 
     privacy_ensure_sync_table($pdo);
+    $environment = privacy_normalize_environment($environment);
 
     $stmt = $pdo->prepare(
         'SELECT id, fm_pk
@@ -696,15 +755,21 @@ function privacy_bootstrap_sync_rows_from_api(PDO $pdo, array $apiTransactionsBy
             $accountId,
             (int)$row['id'],
             null,
-            'active'
+            'active',
+            null,
+            $environment
         );
         $touchStmt = $pdo->prepare(
             'UPDATE privacy_transaction_sync
              SET next_check_at = NOW(),
                  last_error = NULL
-             WHERE transaction_token = :transaction_token'
+             WHERE transaction_token = :transaction_token
+               AND environment = :environment'
         );
-        $touchStmt->execute([':transaction_token' => $token]);
+        $touchStmt->execute([
+            ':transaction_token' => $token,
+            ':environment' => $environment,
+        ]);
         $count++;
     }
 
@@ -730,7 +795,7 @@ function privacy_api_get_key(): string
     throw new RuntimeException('Privacy API key is not configured. Set PRIVACY_API_KEY or add config[privacy][api_key].');
 }
 
-function privacy_api_request_json(string $apiKey, string $path, array $query = []): array
+function privacy_api_request_json(string $apiKey, string $path, array $query = [], ?string $environment = null): array
 {
     if (!function_exists('curl_init')) {
         throw new RuntimeException('The PHP cURL extension is required for Privacy API sync.');
@@ -754,7 +819,7 @@ function privacy_api_request_json(string $apiKey, string $path, array $query = [
         ],
         CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_TIMEOUT => 30,
-        CURLOPT_USERAGENT => 'budget.lillard.dev/privacy-sync',
+        CURLOPT_USERAGENT => privacy_api_user_agent($environment),
     ]);
 
     $body = curl_exec($ch);
@@ -783,7 +848,13 @@ function privacy_api_request_json(string $apiKey, string $path, array $query = [
     return $decoded;
 }
 
-function privacy_api_list_transactions(string $apiKey, string $beginDate, int $pageSize = 1000, int $maxPages = 25): array
+function privacy_api_list_transactions(
+    string $apiKey,
+    string $beginDate,
+    int $pageSize = 1000,
+    int $maxPages = 25,
+    ?string $environment = null
+): array
 {
     $pageSize = max(1, min($pageSize, 1000));
     $maxPages = max(1, min($maxPages, 100));
@@ -796,7 +867,7 @@ function privacy_api_list_transactions(string $apiKey, string $beginDate, int $p
             'begin' => $beginDate,
             'page' => $page,
             'page_size' => $pageSize,
-        ]);
+        ], $environment);
 
         $rows = $response['data'] ?? [];
         if (!is_array($rows)) {

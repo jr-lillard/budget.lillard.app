@@ -3,6 +3,99 @@ declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/privacy.php';
 
+function privacy_header_value(array $headers, string $name): ?string
+{
+    foreach ($headers as $headerName => $value) {
+        if (strcasecmp((string)$headerName, $name) === 0) {
+            $stringValue = trim((string)$value);
+            return $stringValue !== '' ? $stringValue : null;
+        }
+    }
+
+    return null;
+}
+
+function privacy_request_was_forwarded(array $headers): bool
+{
+    return privacy_header_value($headers, 'X-Budget-Privacy-Forwarded') !== null;
+}
+
+function privacy_forward_webhook_to_peer(
+    string $targetUrl,
+    array $headers,
+    string $body,
+    string $sourceEnvironment,
+    string $sourceHost
+): array {
+    if (!function_exists('curl_init')) {
+        return [
+            'attempted' => true,
+            'ok' => false,
+            'error' => 'The PHP cURL extension is required to forward the webhook.',
+        ];
+    }
+
+    $contentType = privacy_header_value($headers, 'Content-Type') ?? 'application/json';
+    $forwardHeaders = [
+        'Accept: application/json',
+        'Content-Type: ' . $contentType,
+        'User-Agent: budget.lillard.app/privacy-webhook-forwarder/' . privacy_normalize_environment($sourceEnvironment),
+        'X-Budget-Privacy-Forwarded: ' . privacy_normalize_environment($sourceEnvironment),
+        'X-Budget-Privacy-Source-Host: ' . $sourceHost,
+    ];
+
+    $privacyHmac = privacy_header_value($headers, 'X-Privacy-Hmac');
+    if ($privacyHmac !== null) {
+        $forwardHeaders[] = 'X-Privacy-Hmac: ' . $privacyHmac;
+    }
+
+    $ch = curl_init($targetUrl);
+    if ($ch === false) {
+        return [
+            'attempted' => true,
+            'ok' => false,
+            'error' => 'Unable to initialize cURL for prod forward.',
+        ];
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $forwardHeaders,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 20,
+    ]);
+
+    $responseBody = curl_exec($ch);
+    if ($responseBody === false) {
+        $error = curl_error($ch);
+        curl_close($ch);
+        return [
+            'attempted' => true,
+            'ok' => false,
+            'error' => 'Prod forward failed: ' . $error,
+        ];
+    }
+
+    $statusCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    $decoded = json_decode((string)$responseBody, true);
+    $response = is_array($decoded) ? $decoded : null;
+
+    return [
+        'attempted' => true,
+        'ok' => $statusCode >= 200 && $statusCode < 300 && is_array($response) && (($response['ok'] ?? false) === true),
+        'http_status' => $statusCode,
+        'response_webhook_id' => is_array($response) && isset($response['webhook_id']) ? (int)$response['webhook_id'] : null,
+        'response_record_url' => is_array($response) ? ($response['record_url'] ?? null) : null,
+        'error' => ($statusCode >= 200 && $statusCode < 300)
+            ? null
+            : ('Prod receiver returned HTTP ' . $statusCode),
+    ];
+}
+
 function privacy_finish_response(string $json): void
 {
     ignore_user_abort(true);
@@ -21,18 +114,38 @@ function privacy_finish_response(string $json): void
     flush();
 }
 
-// Dev-only webhook receiver for testing Privacy deliveries.
-$allowedHost = 'budget.lillard.dev';
+$scriptPath = (string)($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? basename(__FILE__));
+$scriptPath = '/' . basename($scriptPath);
+
+$receiverConfigs = [
+    'budget.lillard.dev' => [
+        'environment' => 'dev',
+        'receiver' => 'privacy webhook dev',
+        'forward_target_url' => 'https://budget.lillard.app' . $scriptPath,
+    ],
+    'budget.lillard.app' => [
+        'environment' => 'prod',
+        'receiver' => 'privacy webhook prod',
+        'forward_target_url' => null,
+    ],
+];
+
 $importOwner = 'jr@lillard.org';
 $importAccountId = 1; // Meritrust Credit Union Personal Checking
 
 $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
-if ($host !== $allowedHost) {
+$host = preg_replace('/:\d+$/', '', $host);
+$receiverConfig = $receiverConfigs[$host] ?? null;
+if (!is_array($receiverConfig)) {
     http_response_code(404);
     header('Content-Type: application/json; charset=UTF-8');
     echo json_encode(['ok' => false, 'error' => 'Not found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     exit;
 }
+$environment = privacy_normalize_environment((string)($receiverConfig['environment'] ?? 'dev'));
+$receiverName = (string)($receiverConfig['receiver'] ?? ('privacy webhook ' . $environment));
+$forwardTargetUrl = $receiverConfig['forward_target_url'] ?? null;
+$postUrl = 'https://' . $host . $scriptPath;
 
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 if ($method === 'OPTIONS') {
@@ -47,10 +160,6 @@ if (!in_array($method, ['GET', 'POST', 'HEAD'], true)) {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     exit;
 }
-
-$scriptPath = (string)($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? basename(__FILE__));
-$scriptPath = '/' . basename($scriptPath);
-
 $headers = [];
 if (function_exists('getallheaders')) {
     foreach ((array)getallheaders() as $name => $value) {
@@ -86,26 +195,28 @@ try {
 if ($method === 'GET' || $method === 'HEAD') {
     $recordId = (int)($_GET['id'] ?? 0);
     if ($recordId > 0) {
-        $row = privacy_fetch_webhook($pdo, $recordId);
+        $row = privacy_fetch_webhook($pdo, $recordId, $environment);
         if ($row === null) {
             $respond(['ok' => false, 'error' => 'Webhook record not found'], 404);
         }
         $respond([
             'ok' => true,
-            'host' => $allowedHost,
-            'receiver' => 'privacy webhook dev',
-            'record' => privacy_render_webhook_row($row, $allowedHost, $scriptPath),
+            'host' => $host,
+            'receiver' => $receiverName,
+            'record' => privacy_render_webhook_row($row, $host, $scriptPath),
         ]);
     }
 
-    $listStmt = $pdo->query(
+    $listStmt = $pdo->prepare(
         'SELECT id, received_at, processed_at, processing_status, processing_attempts, content_type, body_bytes,
                 transaction_token, event_type, merchant_descriptor, amount_minor, result,
                 import_action, transaction_id
          FROM privacy_webhooks
+         WHERE environment = :environment
          ORDER BY id DESC
          LIMIT 50'
     );
+    $listStmt->execute([':environment' => $environment]);
     $rows = $listStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $entries = [];
     foreach ($rows as $row) {
@@ -125,15 +236,15 @@ if ($method === 'GET' || $method === 'HEAD') {
             'result' => $row['result'] ?? null,
             'import_action' => $row['import_action'] ?? null,
             'transaction_id' => isset($row['transaction_id']) ? (int)$row['transaction_id'] : null,
-            'record_url' => 'https://' . $allowedHost . $scriptPath . '?id=' . $webhookId,
+            'record_url' => $postUrl . '?id=' . $webhookId,
         ];
     }
 
     $respond([
         'ok' => true,
-        'host' => $allowedHost,
-        'receiver' => 'privacy webhook dev',
-        'post_url' => 'https://' . $allowedHost . $scriptPath,
+        'host' => $host,
+        'receiver' => $receiverName,
+        'post_url' => $postUrl,
         'entries' => $entries,
     ]);
 }
@@ -160,12 +271,13 @@ try {
             transaction_token, event_type, result, merchant_descriptor, amount_minor,
             headers_json, body_json, body_text, body_base64
         ) VALUES (
-            "privacy", "dev", :received_at, :host, :method, :request_uri, :remote_addr, :content_type, :body_bytes,
+            "privacy", :environment, :received_at, :host, :method, :request_uri, :remote_addr, :content_type, :body_bytes,
             :transaction_token, :event_type, :result, :merchant_descriptor, :amount_minor,
             :headers_json, :body_json, :body_text, :body_base64
         )'
     );
     $insertStmt->execute([
+        ':environment' => $environment,
         ':received_at' => $receivedAtDb,
         ':host' => $host,
         ':method' => $method,
@@ -188,10 +300,10 @@ try {
     $respond(['ok' => false, 'error' => 'Unable to persist webhook payload to MySQL', 'detail' => $e->getMessage()], 500);
 }
 
-$recordUrl = 'https://' . $allowedHost . $scriptPath . '?id=' . $webhookId;
+$recordUrl = $postUrl . '?id=' . $webhookId;
 $ackPayload = [
     'ok' => true,
-    'message' => 'Webhook recorded on dev',
+    'message' => 'Webhook recorded on ' . $environment,
     'webhook_id' => $webhookId,
     'received_at' => $receivedAtIso,
     'body_bytes' => strlen($body),
@@ -214,17 +326,74 @@ try {
     );
     $markStmt->execute([':id' => $webhookId]);
 
-    $importSummary = privacy_process_transaction_import($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId);
-    privacy_record_sync_result($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId, $importSummary, $webhookId);
+    $importSummary = [
+        'attempted' => false,
+        'ok' => null,
+        'action' => 'ignored',
+        'reason' => null,
+        'transaction_id' => null,
+    ];
+    $forwardSummary = null;
+
+    try {
+        $importSummary = privacy_process_transaction_import($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId);
+        privacy_record_sync_result(
+            $pdo,
+            is_array($decodedJson) ? $decodedJson : null,
+            $importOwner,
+            $importAccountId,
+            $importSummary,
+            $webhookId,
+            $environment
+        );
+    } catch (Throwable $importError) {
+        $importSummary = [
+            'attempted' => true,
+            'ok' => false,
+            'action' => 'error',
+            'reason' => $importError->getMessage(),
+            'transaction_id' => null,
+            'transaction_token' => $meta['transaction_token'],
+            'privacy_status' => $meta['status'],
+        ];
+        privacy_upsert_sync_record(
+            $pdo,
+            is_array($decodedJson) ? $decodedJson : null,
+            $importOwner,
+            $importAccountId,
+            null,
+            $webhookId,
+            'active',
+            $importError->getMessage(),
+            $environment
+        );
+    }
 
     $processingNotes = [];
     if ($importSummary['ok'] === false && !empty($importSummary['reason'])) {
         $processingNotes[] = 'Import: ' . (string)$importSummary['reason'];
     }
-    $processingStatus = ($importSummary['ok'] === false) ? 'error' : 'processed';
+
+    if (
+        $environment === 'dev'
+        && $method === 'POST'
+        && is_string($forwardTargetUrl)
+        && $forwardTargetUrl !== ''
+        && !privacy_request_was_forwarded($headers)
+    ) {
+        $forwardSummary = privacy_forward_webhook_to_peer($forwardTargetUrl, $headers, $body, $environment, $host);
+        if (($forwardSummary['ok'] ?? false) !== true) {
+            $processingNotes[] = 'Prod forward: ' . (string)($forwardSummary['error'] ?? 'Unknown forward failure');
+        }
+    }
+
+    $processingStatus = ($importSummary['ok'] === false)
+        ? 'error'
+        : (($processingNotes !== []) ? 'warning' : 'processed');
     $processingError = $processingNotes !== [] ? implode(' | ', $processingNotes) : null;
     $summaryJson = privacy_json_encode([
         'import_transaction' => $importSummary,
+        'forward_to_prod' => $forwardSummary,
     ]);
 
     $finalizeStmt = $pdo->prepare(
@@ -261,7 +430,8 @@ try {
             null,
             $webhookId,
             'active',
-            $e->getMessage()
+            $e->getMessage(),
+            $environment
         );
         $failStmt = $pdo->prepare(
             'UPDATE privacy_webhooks
