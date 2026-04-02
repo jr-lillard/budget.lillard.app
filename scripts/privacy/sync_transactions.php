@@ -9,19 +9,30 @@ if (PHP_SAPI !== 'cli') {
 
 require_once dirname(__DIR__, 2) . '/privacy.php';
 
-$options = getopt('', ['dry-run', 'limit::', 'begin::', 'environment::']);
+$options = getopt('', ['dry-run', 'limit::', 'begin::', 'environment::', 'owner::', 'account-id::']);
 $dryRun = array_key_exists('dry-run', $options);
 $limit = isset($options['limit']) ? max(1, min((int)$options['limit'], 250)) : 50;
 $beginDate = isset($options['begin']) ? trim((string)$options['begin']) : gmdate('Y-m-d', strtotime('-365 days'));
 $environmentOption = isset($options['environment']) ? trim((string)$options['environment']) : trim((string)getenv('BUDGET_PRIVACY_ENVIRONMENT'));
 $environment = privacy_normalize_environment($environmentOption !== '' ? $environmentOption : 'dev');
+$ownerOption = isset($options['owner']) ? trim((string)$options['owner']) : trim((string)getenv('BUDGET_PRIVACY_OWNER'));
+$accountIdOption = isset($options['account-id']) ? trim((string)$options['account-id']) : trim((string)getenv('BUDGET_PRIVACY_ACCOUNT_ID'));
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $beginDate)) {
     fwrite(STDERR, "Invalid --begin value. Expected YYYY-MM-DD.\n");
     exit(1);
 }
 
-$owner = 'jr@lillard.org';
-$accountId = 1;
+$owner = budget_canonical_user($ownerOption !== '' ? $ownerOption : 'jr@lillard.org');
+if ($owner === '') {
+    fwrite(STDERR, "Invalid owner value.\n");
+    exit(1);
+}
+
+$accountId = $accountIdOption !== '' ? (int)$accountIdOption : 1;
+if ($accountId <= 0) {
+    fwrite(STDERR, "Invalid account id value.\n");
+    exit(1);
+}
 
 try {
     $pdo = get_mysql_connection();
@@ -39,6 +50,8 @@ $dueRows = privacy_fetch_due_sync_rows($pdo, $limit, $environment);
 $summary = [
     'dry_run' => $dryRun,
     'environment' => $environment,
+    'owner' => $owner,
+    'account_id' => $accountId,
     'begin' => $beginDate,
     'api_transactions' => count($apiTransactionsByToken),
     'bootstrapped' => $bootstrapped,
