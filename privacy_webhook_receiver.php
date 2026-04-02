@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once dirname(__DIR__) . '/privacy.php';
+require_once __DIR__ . '/privacy.php';
 
 function privacy_finish_response(string $json): void
 {
