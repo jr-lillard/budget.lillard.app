@@ -183,21 +183,72 @@ function budget_apply_privacy_description_rule(PDO $pdo, string $owner, string $
     budget_ensure_description_rules_table($pdo);
 
     try {
+        $normalize = static function (string $value): string {
+            $value = trim($value);
+            if ($value === '') {
+                return '';
+            }
+
+            if (function_exists('mb_strtolower')) {
+                return mb_strtolower($value, 'UTF-8');
+            }
+
+            return strtolower($value);
+        };
+
+        $matches = static function (string $matchType, string $matchValue, string $rawValue) use ($normalize): bool {
+            $matchValueNorm = $normalize($matchValue);
+            $rawValueNorm = $normalize($rawValue);
+            if ($matchValueNorm === '' || $rawValueNorm === '') {
+                return false;
+            }
+
+            if ($matchType === 'exact') {
+                return $rawValueNorm === $matchValueNorm;
+            }
+
+            if ($matchType === 'prefix') {
+                return strncmp($rawValueNorm, $matchValueNorm, strlen($matchValueNorm)) === 0;
+            }
+
+            if ($matchType === 'contains') {
+                return strpos($rawValueNorm, $matchValueNorm) !== false;
+            }
+
+            return false;
+        };
+
         $stmt = $pdo->prepare(
-            'SELECT id, replacement_value
+            'SELECT id, match_type, match_value, replacement_value
              FROM description_rules
              WHERE owner = :owner
                AND source = "privacy"
-               AND match_type = "exact"
-               AND match_value = :match_value
-             LIMIT 1'
+               AND match_type IN ("exact", "prefix", "contains")
+             ORDER BY
+                 CASE match_type
+                     WHEN "exact" THEN 1
+                     WHEN "prefix" THEN 2
+                     WHEN "contains" THEN 3
+                     ELSE 9
+                 END,
+                 CHAR_LENGTH(match_value) DESC,
+                 id ASC'
         );
         $stmt->execute([
             ':owner' => $owner,
-            ':match_value' => $rawDescription,
         ]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
-        if (!$row) {
+
+        $row = null;
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $candidate) {
+            $matchType = trim((string)($candidate['match_type'] ?? ''));
+            $matchValue = trim((string)($candidate['match_value'] ?? ''));
+            if ($matches($matchType, $matchValue, $rawDescription)) {
+                $row = $candidate;
+                break;
+            }
+        }
+
+        if (!is_array($row)) {
             return $rawDescription;
         }
 
