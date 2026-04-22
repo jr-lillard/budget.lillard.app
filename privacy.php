@@ -49,6 +49,183 @@ function privacy_amount_string(?int $amountMinor): ?string
     return number_format($amountMinor / 100, 2, '.', '');
 }
 
+function privacy_format_currency(float $amount): string
+{
+    return ($amount < 0 ? '-$' : '$') . number_format(abs($amount), 2, '.', ',');
+}
+
+function privacy_low_balance_alert_threshold(): float
+{
+    return 100.0;
+}
+
+function privacy_fetch_account_projected_balance(PDO $pdo, string $owner, int $accountId): float
+{
+    $owner = budget_canonical_user($owner);
+    if ($owner === '' || $accountId <= 0) {
+        return 0.0;
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT COALESCE(SUM(amount), 0)
+         FROM transactions
+         WHERE owner = :owner
+           AND account_id = :account_id'
+    );
+    $stmt->execute([
+        ':owner' => $owner,
+        ':account_id' => $accountId,
+    ]);
+
+    return round((float)($stmt->fetchColumn() ?: 0), 2);
+}
+
+function privacy_lookup_account_name(PDO $pdo, int $accountId): string
+{
+    if ($accountId <= 0) {
+        return '';
+    }
+
+    $stmt = $pdo->prepare('SELECT name FROM accounts WHERE id = :id LIMIT 1');
+    $stmt->execute([':id' => $accountId]);
+    return trim((string)($stmt->fetchColumn() ?? ''));
+}
+
+function privacy_lookup_transaction_description(PDO $pdo, ?int $transactionId): string
+{
+    $transactionId = (int)$transactionId;
+    if ($transactionId <= 0) {
+        return '';
+    }
+
+    $stmt = $pdo->prepare('SELECT description FROM transactions WHERE id = :id LIMIT 1');
+    $stmt->execute([':id' => $transactionId]);
+    return trim((string)($stmt->fetchColumn() ?? ''));
+}
+
+function privacy_dashboard_url_for_environment(string $environment, int $accountId): ?string
+{
+    $environment = privacy_normalize_environment($environment);
+
+    if ($environment === 'dev') {
+        $base = 'https://budget.lillard.dev/';
+    } elseif (str_starts_with($environment, 'prod')) {
+        $base = 'https://budget.lillard.app/';
+    } else {
+        return null;
+    }
+
+    if ($accountId <= 0) {
+        return $base;
+    }
+
+    return $base . '?' . http_build_query(['account_id' => $accountId]);
+}
+
+function privacy_send_low_balance_alert(
+    PDO $pdo,
+    ?array $decodedJson,
+    string $owner,
+    int $accountId,
+    float $balanceBefore,
+    float $balanceAfter,
+    ?int $transactionId = null,
+    string $environment = 'dev'
+): array {
+    $threshold = privacy_low_balance_alert_threshold();
+    $owner = budget_canonical_user($owner);
+    $result = [
+        'attempted' => false,
+        'triggered' => false,
+        'ok' => null,
+        'error' => null,
+        'email_to' => $owner !== '' ? $owner : null,
+        'threshold' => $threshold,
+        'balance_before' => round($balanceBefore, 2),
+        'balance_after' => round($balanceAfter, 2),
+    ];
+
+    if ($owner === '' || $accountId <= 0) {
+        return $result;
+    }
+
+    if ($balanceBefore < $threshold || $balanceAfter >= $threshold) {
+        return $result;
+    }
+
+    $meta = privacy_extract_meta($decodedJson);
+    $accountName = privacy_lookup_account_name($pdo, $accountId);
+    $txDescription = privacy_lookup_transaction_description($pdo, $transactionId);
+    $merchantDescriptor = trim((string)($meta['merchant_descriptor'] ?? ''));
+    $eventType = trim((string)($meta['event_type'] ?? ''));
+    $status = trim((string)($meta['status'] ?? ''));
+    $transactionToken = trim((string)($meta['transaction_token'] ?? ''));
+    $dashboardUrl = privacy_dashboard_url_for_environment($environment, $accountId);
+    $transactionLabel = $txDescription !== ''
+        ? $txDescription
+        : ($merchantDescriptor !== '' ? $merchantDescriptor : 'Privacy transaction');
+    $amountMinor = privacy_extract_amount_minor($decodedJson);
+    $amountText = $amountMinor !== 0 ? privacy_format_currency(-1 * (abs($amountMinor) / 100)) : 'n/a';
+    $accountLabel = $accountName !== '' ? $accountName : ('Account #' . $accountId);
+    $subject = 'Budget alert: ' . $accountLabel . ' scheduled balance is now ' . privacy_format_currency($balanceAfter);
+
+    $lines = [
+        'A Privacy transaction dropped the scheduled balance below ' . privacy_format_currency($threshold) . '.',
+        '',
+        'Account: ' . $accountLabel,
+        'Transaction: ' . $transactionLabel,
+        'Amount: ' . $amountText,
+        'Balance before: ' . privacy_format_currency($balanceBefore),
+        'Balance after: ' . privacy_format_currency($balanceAfter),
+    ];
+    if ($status !== '') {
+        $lines[] = 'Privacy status: ' . $status;
+    }
+    if ($eventType !== '') {
+        $lines[] = 'Privacy event: ' . $eventType;
+    }
+    if ($transactionToken !== '') {
+        $lines[] = 'Privacy token: ' . $transactionToken;
+    }
+    if ($dashboardUrl !== null) {
+        $lines[] = 'Dashboard: ' . $dashboardUrl;
+    }
+    $text = implode("\n", $lines);
+
+    $htmlParts = [
+        '<p>A Privacy transaction dropped the scheduled balance below <strong>' . htmlspecialchars(privacy_format_currency($threshold), ENT_QUOTES, 'UTF-8') . '</strong>.</p>',
+        '<table cellpadding="6" cellspacing="0" border="0">',
+        '<tr><td><strong>Account</strong></td><td>' . htmlspecialchars($accountLabel, ENT_QUOTES, 'UTF-8') . '</td></tr>',
+        '<tr><td><strong>Transaction</strong></td><td>' . htmlspecialchars($transactionLabel, ENT_QUOTES, 'UTF-8') . '</td></tr>',
+        '<tr><td><strong>Amount</strong></td><td>' . htmlspecialchars($amountText, ENT_QUOTES, 'UTF-8') . '</td></tr>',
+        '<tr><td><strong>Balance before</strong></td><td>' . htmlspecialchars(privacy_format_currency($balanceBefore), ENT_QUOTES, 'UTF-8') . '</td></tr>',
+        '<tr><td><strong>Balance after</strong></td><td>' . htmlspecialchars(privacy_format_currency($balanceAfter), ENT_QUOTES, 'UTF-8') . '</td></tr>',
+    ];
+    if ($status !== '') {
+        $htmlParts[] = '<tr><td><strong>Privacy status</strong></td><td>' . htmlspecialchars($status, ENT_QUOTES, 'UTF-8') . '</td></tr>';
+    }
+    if ($eventType !== '') {
+        $htmlParts[] = '<tr><td><strong>Privacy event</strong></td><td>' . htmlspecialchars($eventType, ENT_QUOTES, 'UTF-8') . '</td></tr>';
+    }
+    if ($transactionToken !== '') {
+        $htmlParts[] = '<tr><td><strong>Privacy token</strong></td><td><code>' . htmlspecialchars($transactionToken, ENT_QUOTES, 'UTF-8') . '</code></td></tr>';
+    }
+    $htmlParts[] = '</table>';
+    if ($dashboardUrl !== null) {
+        $safeUrl = htmlspecialchars($dashboardUrl, ENT_QUOTES, 'UTF-8');
+        $htmlParts[] = '<p><a href="' . $safeUrl . '">Open account in budget dashboard</a></p>';
+    }
+    $html = implode("\n", $htmlParts);
+
+    $result['attempted'] = true;
+    $result['triggered'] = true;
+    [$ok, $error] = send_mail_via_smtp2go($owner, $subject, $html, $text, null);
+    $result['ok'] = $ok;
+    $result['error'] = $error;
+
+    return $result;
+}
+
 function privacy_normalize_environment(?string $environment, string $fallback = 'dev'): string
 {
     $environment = strtolower(trim((string)$environment));
@@ -260,7 +437,13 @@ function privacy_should_delete_unposted(?array $decodedJson): bool
     return $result !== '' && $result !== 'APPROVED' && privacy_is_terminal_status($status);
 }
 
-function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, string $importOwner, int $importAccountId): array
+function privacy_process_transaction_import(
+    PDO $pdo,
+    ?array $decodedJson,
+    string $importOwner,
+    int $importAccountId,
+    string $environment = 'dev'
+): array
 {
     $meta = privacy_extract_meta($decodedJson);
     $eventType = (string)($meta['event_type'] ?? '');
@@ -292,6 +475,7 @@ function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, strin
         try { $pdo->exec("ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL"); } catch (Throwable $e) { /* ignore */ }
 
         $owner = budget_canonical_user($importOwner);
+        $balanceBefore = privacy_fetch_account_projected_balance($pdo, $owner, $importAccountId);
         $existingStmt = $pdo->prepare('SELECT id, status, posted FROM transactions WHERE fm_pk = :fm_pk LIMIT 1');
         $existingStmt->execute([':fm_pk' => $eventToken]);
         $existingTx = $existingStmt->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -363,9 +547,22 @@ function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, strin
                     ':description' => $description,
                     ':id' => $existingId,
                 ]);
+                $balanceAfter = privacy_fetch_account_projected_balance($pdo, $owner, $importAccountId);
                 $importSummary['ok'] = true;
                 $importSummary['action'] = 'updated';
                 $importSummary['transaction_id'] = $existingId;
+                $importSummary['balance_before'] = $balanceBefore;
+                $importSummary['balance_after'] = $balanceAfter;
+                $importSummary['low_balance_alert'] = privacy_send_low_balance_alert(
+                    $pdo,
+                    $decodedJson,
+                    $owner,
+                    $importAccountId,
+                    $balanceBefore,
+                    $balanceAfter,
+                    $existingId,
+                    $environment
+                );
             }
             return $importSummary;
         }
@@ -382,9 +579,23 @@ function privacy_process_transaction_import(PDO $pdo, ?array $decodedJson, strin
             ':description' => $description,
             ':owner' => $owner,
         ]);
+        $transactionId = (int)$pdo->lastInsertId();
+        $balanceAfter = privacy_fetch_account_projected_balance($pdo, $owner, $importAccountId);
         $importSummary['ok'] = true;
         $importSummary['action'] = 'inserted';
-        $importSummary['transaction_id'] = (int)$pdo->lastInsertId();
+        $importSummary['transaction_id'] = $transactionId;
+        $importSummary['balance_before'] = $balanceBefore;
+        $importSummary['balance_after'] = $balanceAfter;
+        $importSummary['low_balance_alert'] = privacy_send_low_balance_alert(
+            $pdo,
+            $decodedJson,
+            $owner,
+            $importAccountId,
+            $balanceBefore,
+            $balanceAfter,
+            $transactionId,
+            $environment
+        );
         return $importSummary;
     } catch (Throwable $e) {
         $importSummary['ok'] = false;

@@ -113,7 +113,7 @@ foreach ($dueRows as $row) {
             'reason' => null,
             'transaction_id' => $transactionId > 0 ? $transactionId : null,
         ]
-        : privacy_process_transaction_import($pdo, $payload, $owner, $accountId);
+        : privacy_process_transaction_import($pdo, $payload, $owner, $accountId, $environment);
 
     if (!$dryRun) {
         privacy_record_sync_result($pdo, $payload, $owner, $accountId, $importSummary, null, $environment);

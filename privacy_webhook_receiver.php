@@ -247,7 +247,13 @@ try {
     ];
 
     try {
-        $importSummary = privacy_process_transaction_import($pdo, is_array($decodedJson) ? $decodedJson : null, $importOwner, $importAccountId);
+        $importSummary = privacy_process_transaction_import(
+            $pdo,
+            is_array($decodedJson) ? $decodedJson : null,
+            $importOwner,
+            $importAccountId,
+            $environment
+        );
         privacy_record_sync_result(
             $pdo,
             is_array($decodedJson) ? $decodedJson : null,
@@ -284,10 +290,18 @@ try {
     if ($importSummary['ok'] === false && !empty($importSummary['reason'])) {
         $processingNotes[] = 'Import: ' . (string)$importSummary['reason'];
     }
+    if (!empty($importSummary['low_balance_alert']['attempted']) && ($importSummary['low_balance_alert']['ok'] ?? null) === false && !empty($importSummary['low_balance_alert']['error'])) {
+        $processingNotes[] = 'Low balance email: ' . (string)$importSummary['low_balance_alert']['error'];
+    }
     $processingStatus = ($importSummary['ok'] === false)
         ? 'error'
         : (($processingNotes !== []) ? 'warning' : 'processed');
     $processingError = $processingNotes !== [] ? implode(' | ', $processingNotes) : null;
+    $alertSummary = is_array($importSummary['low_balance_alert'] ?? null) ? $importSummary['low_balance_alert'] : null;
+    $alertAttempted = is_array($alertSummary) && !empty($alertSummary['attempted']);
+    $alertOk = $alertAttempted ? (($alertSummary['ok'] ?? null) ? 1 : 0) : null;
+    $alertError = $alertAttempted && !empty($alertSummary['error']) ? (string)$alertSummary['error'] : null;
+    $alertSentAt = $alertAttempted && (($alertSummary['ok'] ?? null) === true) ? gmdate('Y-m-d H:i:s') : null;
     $summaryJson = privacy_json_encode([
         'import_transaction' => $importSummary,
     ]);
@@ -311,9 +325,9 @@ try {
         ':import_action' => $importSummary['action'],
         ':transaction_id' => $importSummary['transaction_id'],
         ':import_summary_json' => $summaryJson,
-        ':email_ok' => null,
-        ':email_error' => null,
-        ':email_sent_at' => null,
+        ':email_ok' => $alertOk,
+        ':email_error' => $alertError,
+        ':email_sent_at' => $alertSentAt,
         ':id' => $webhookId,
     ]);
 } catch (Throwable $e) {
