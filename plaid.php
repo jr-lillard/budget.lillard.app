@@ -348,6 +348,212 @@ function plaid_fetch_account_mapping_row(PDO $pdo, string $owner, int $plaidAcco
     return is_array($row) ? $row : null;
 }
 
+function plaid_fetch_unmatched_review(PDO $pdo, string $owner, int $limit = 25): array
+{
+    plaid_ensure_tables($pdo);
+    $owner = budget_canonical_user($owner);
+    $limit = max(1, min(100, $limit));
+    $stmt = $pdo->prepare(
+        'SELECT pt.id, pt.plaid_item_id, pt.plaid_account_id, pt.plaid_transaction_id,
+                pt.budget_transaction_id,
+                pt.date, pt.authorized_date, pt.amount, pt.name, pt.merchant_name,
+                pt.pending, pt.match_method,
+                pi.institution_name,
+                pa.name AS plaid_account_name,
+                pa.mask AS plaid_account_mask,
+                pa.local_account_id,
+                a.name AS local_account_name
+         FROM plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         JOIN plaid_accounts pa
+           ON pa.plaid_item_id = pt.plaid_item_id
+          AND pa.plaid_account_id = pt.plaid_account_id
+         LEFT JOIN accounts a ON a.id = pa.local_account_id
+         WHERE pi.owner = :owner
+           AND pt.removed = 0
+           AND (pt.budget_transaction_id IS NULL OR pt.match_method = "created")
+           AND pa.local_account_id IS NOT NULL
+         ORDER BY COALESCE(pt.date, pt.authorized_date) DESC, pt.id DESC
+         LIMIT ' . $limit
+    );
+    $stmt->execute([':owner' => $owner]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($rows as &$row) {
+        $row['budget_amount'] = plaid_budget_amount_from_plaid_amount($row['amount'] ?? null);
+        $row['candidates'] = plaid_fetch_merge_candidates(
+            $pdo,
+            $owner,
+            (int)($row['local_account_id'] ?? 0),
+            $row['budget_amount'],
+            plaid_valid_date((string)($row['date'] ?? '')) ?? plaid_valid_date((string)($row['authorized_date'] ?? '')),
+            (int)($row['id'] ?? 0),
+            (int)($row['budget_transaction_id'] ?? 0)
+        );
+    }
+    unset($row);
+    return $rows;
+}
+
+function plaid_fetch_merge_candidates(
+    PDO $pdo,
+    string $owner,
+    int $localAccountId,
+    ?string $budgetAmount,
+    ?string $date,
+    int $plaidTransactionRowId,
+    int $excludeBudgetTransactionId = 0,
+    int $limit = 12
+): array {
+    if ($localAccountId <= 0) {
+        return [];
+    }
+    $owner = budget_canonical_user($owner);
+    $limit = max(1, min(50, $limit));
+    if ($date === null) {
+        $date = gmdate('Y-m-d');
+    }
+    [$startDate, $endDate] = plaid_date_range($date, 14);
+    $amountForOrder = $budgetAmount !== null && is_numeric($budgetAmount) ? $budgetAmount : '0.00';
+
+    $stmt = $pdo->prepare(
+        'SELECT t.id, t.`date`, t.amount, t.description, t.status, t.posted
+         FROM transactions t
+         LEFT JOIN plaid_transactions linked
+           ON linked.budget_transaction_id = t.id
+          AND linked.removed = 0
+          AND linked.id <> :plaid_transaction_row_id
+         WHERE t.owner = :owner
+           AND t.account_id = :account_id
+           AND t.`date` BETWEEN :start_date AND :end_date
+           AND (:exclude_budget_transaction_id = 0 OR t.id <> :exclude_budget_transaction_id)
+           AND linked.id IS NULL
+           ORDER BY (t.amount = :amount_for_order) DESC,
+                  ABS(DATEDIFF(t.`date`, :target_date)) ASC,
+                  t.id DESC
+         LIMIT ' . $limit
+    );
+    $stmt->execute([
+        ':plaid_transaction_row_id' => $plaidTransactionRowId,
+        ':owner' => $owner,
+        ':account_id' => $localAccountId,
+        ':start_date' => $startDate,
+        ':end_date' => $endDate,
+        ':exclude_budget_transaction_id' => max(0, $excludeBudgetTransactionId),
+        ':amount_for_order' => $amountForOrder,
+        ':target_date' => $date,
+    ]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function plaid_merge_transaction(PDO $pdo, string $owner, int $plaidTransactionRowId, int $budgetTransactionId): array
+{
+    plaid_ensure_tables($pdo);
+    $owner = budget_canonical_user($owner);
+    if ($plaidTransactionRowId <= 0 || $budgetTransactionId <= 0) {
+        throw new RuntimeException('Missing Plaid or budget transaction.');
+    }
+
+    $plaidStmt = $pdo->prepare(
+        'SELECT pt.id, pt.budget_transaction_id, pt.match_method,
+                pa.local_account_id,
+                pi.owner
+         FROM plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         JOIN plaid_accounts pa
+           ON pa.plaid_item_id = pt.plaid_item_id
+          AND pa.plaid_account_id = pt.plaid_account_id
+         WHERE pt.id = ? AND pi.owner = ? AND pt.removed = 0
+         LIMIT 1'
+    );
+    $plaidStmt->execute([$plaidTransactionRowId, $owner]);
+    $plaid = $plaidStmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($plaid)) {
+        throw new RuntimeException('Plaid transaction not found.');
+    }
+
+    $localAccountId = (int)($plaid['local_account_id'] ?? 0);
+    if ($localAccountId <= 0) {
+        throw new RuntimeException('Map the Plaid account before merging transactions.');
+    }
+
+    $budgetStmt = $pdo->prepare(
+        'SELECT id, account_id, fm_pk
+         FROM transactions
+         WHERE id = ? AND owner = ?
+         LIMIT 1'
+    );
+    $budgetStmt->execute([$budgetTransactionId, $owner]);
+    $budget = $budgetStmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($budget)) {
+        throw new RuntimeException('Budget transaction not found.');
+    }
+    if ((int)($budget['account_id'] ?? 0) !== $localAccountId) {
+        throw new RuntimeException('Budget transaction must belong to the mapped account.');
+    }
+    $linkedStmt = $pdo->prepare(
+        'SELECT COUNT(*)
+         FROM plaid_transactions
+         WHERE budget_transaction_id = ?
+           AND removed = 0
+           AND id <> ?'
+    );
+    $linkedStmt->execute([$budgetTransactionId, $plaidTransactionRowId]);
+    if ((int)$linkedStmt->fetchColumn() > 0) {
+        throw new RuntimeException('Budget transaction is already linked to another Plaid transaction.');
+    }
+
+    $previousBudgetTransactionId = (int)($plaid['budget_transaction_id'] ?? 0);
+    $deletedDuplicateId = null;
+    $pdo->beginTransaction();
+    try {
+        $update = $pdo->prepare(
+            'UPDATE plaid_transactions
+             SET budget_transaction_id = :budget_transaction_id,
+                 match_method = "manual_merge",
+                 matched_at = UTC_TIMESTAMP()
+             WHERE id = :id'
+        );
+        $update->execute([
+            ':budget_transaction_id' => $budgetTransactionId,
+            ':id' => $plaidTransactionRowId,
+        ]);
+
+        if ($previousBudgetTransactionId > 0 && $previousBudgetTransactionId !== $budgetTransactionId) {
+            $oldStmt = $pdo->prepare(
+                'SELECT id, fm_pk
+                 FROM transactions
+                 WHERE id = ? AND owner = ?
+                 LIMIT 1'
+            );
+            $oldStmt->execute([$previousBudgetTransactionId, $owner]);
+            $old = $oldStmt->fetch(PDO::FETCH_ASSOC);
+            $oldFmPk = trim((string)($old['fm_pk'] ?? ''));
+            if (is_array($old) && str_starts_with($oldFmPk, 'plaid:')) {
+                $refStmt = $pdo->prepare('SELECT COUNT(*) FROM plaid_transactions WHERE budget_transaction_id = ?');
+                $refStmt->execute([$previousBudgetTransactionId]);
+                if ((int)$refStmt->fetchColumn() === 0) {
+                    $delete = $pdo->prepare('DELETE FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+                    $delete->execute([$previousBudgetTransactionId, $owner]);
+                    $deletedDuplicateId = $previousBudgetTransactionId;
+                }
+            }
+        }
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    return [
+        'plaid_transaction_id' => $plaidTransactionRowId,
+        'budget_transaction_id' => $budgetTransactionId,
+        'deleted_duplicate_id' => $deletedDuplicateId,
+    ];
+}
+
 function plaid_store_item(PDO $pdo, string $owner, string $environment, array $exchange, array $metadata = []): int
 {
     plaid_ensure_tables($pdo);

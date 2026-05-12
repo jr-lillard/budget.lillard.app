@@ -43,6 +43,7 @@ $accountActivity = [];
 $plaidAvailable = false;
 $plaidItems = [];
 $plaidAccounts = [];
+$plaidReviewRows = [];
 $plaidSummaryError = '';
 $activityMonths = '0';
 $hideClients = '0';
@@ -430,6 +431,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 try {
                     $plaidItems = plaid_fetch_items($pdo, $owner);
                     $plaidAccounts = plaid_fetch_account_mappings($pdo, $owner);
+                    $plaidReviewRows = plaid_fetch_unmatched_review($pdo, $owner, 25);
                 } catch (Throwable $e) {
                     $plaidSummaryError = 'Unable to load Plaid connections.';
                 }
@@ -825,6 +827,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 	                              <?php if ($plaidUnmatchedCount > 0): ?>
 	                                <span class="badge text-bg-warning"><?= $plaidUnmatchedCount ?> unmatched</span>
 	                              <?php endif; ?>
+	                            </td>
+	                          </tr>
+	                        <?php endforeach; ?>
+	                      </tbody>
+	                    </table>
+	                  </div>
+	                </div>
+	              </div>
+	            <?php endif; ?>
+	            <?php if (!empty($plaidReviewRows)): ?>
+	              <div class="card mb-3 shadow-sm">
+	                <div class="card-body">
+	                  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+	                    <h3 class="h6 mb-0">Unmatched Plaid Transactions</h3>
+	                  </div>
+	                  <div class="table-responsive">
+	                    <table class="table table-sm align-middle mb-0">
+	                      <thead class="table-light">
+	                        <tr>
+	                          <th scope="col">Plaid</th>
+	                          <th scope="col" class="text-end">Amount</th>
+	                          <th scope="col">Merge With</th>
+	                          <th scope="col" class="text-end">Action</th>
+	                        </tr>
+	                      </thead>
+	                      <tbody>
+	                        <?php foreach ($plaidReviewRows as $plaidRow): ?>
+	                          <?php
+	                            $plaidDesc = trim((string)($plaidRow['merchant_name'] ?? ''));
+	                            if ($plaidDesc === '') { $plaidDesc = trim((string)($plaidRow['name'] ?? '')); }
+	                            if ($plaidDesc === '') { $plaidDesc = 'Plaid transaction'; }
+	                            $plaidDate = trim((string)($plaidRow['date'] ?? ''));
+	                            $plaidBudgetAmount = $plaidRow['budget_amount'];
+	                            $plaidAmountClass = is_numeric($plaidBudgetAmount) && (float)$plaidBudgetAmount < 0 ? 'text-danger' : 'text-success';
+	                            $plaidAmountFmt = is_numeric($plaidBudgetAmount) ? number_format((float)$plaidBudgetAmount, 2) : '';
+	                            $plaidCandidates = is_array($plaidRow['candidates'] ?? null) ? $plaidRow['candidates'] : [];
+	                          ?>
+	                          <tr>
+	                            <td>
+	                              <div class="fw-semibold"><?= htmlspecialchars($plaidDesc) ?></div>
+	                              <div class="small text-body-secondary">
+	                                <?= htmlspecialchars(trim((string)($plaidRow['local_account_name'] ?? ''))) ?>
+	                                <?= $plaidDate !== '' ? ' · ' . htmlspecialchars($plaidDate) : '' ?>
+	                                <?= trim((string)($plaidRow['match_method'] ?? '')) !== '' ? ' · ' . htmlspecialchars((string)$plaidRow['match_method']) : '' ?>
+	                              </div>
+	                            </td>
+	                            <td class="text-end <?= $plaidAmountClass ?>"><?= $plaidAmountFmt ?></td>
+	                            <td style="min-width: 360px;">
+	                              <select class="form-select form-select-sm plaid-merge-target" data-plaid-transaction-id="<?= (int)$plaidRow['id'] ?>">
+	                                <option value="">Select transaction...</option>
+	                                <?php foreach ($plaidCandidates as $candidate): ?>
+	                                  <?php
+	                                    $candidateAmount = $candidate['amount'] ?? '';
+	                                    $candidateLabel = trim(implode(' · ', array_filter([
+	                                      (string)($candidate['date'] ?? ''),
+	                                      (string)($candidate['description'] ?? ''),
+	                                      is_numeric($candidateAmount) ? number_format((float)$candidateAmount, 2) : (string)$candidateAmount,
+	                                    ])));
+	                                  ?>
+	                                  <option value="<?= (int)$candidate['id'] ?>"><?= htmlspecialchars($candidateLabel) ?></option>
+	                                <?php endforeach; ?>
+	                              </select>
+	                            </td>
+	                            <td class="text-end">
+	                              <button type="button" class="btn btn-sm btn-outline-primary plaid-merge-btn" <?= empty($plaidCandidates) ? 'disabled' : '' ?>>
+	                                Merge
+	                              </button>
 	                            </td>
 	                          </tr>
 	                        <?php endforeach; ?>
@@ -1792,6 +1861,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           });
           if (!result) {
             select.disabled = false;
+            return;
+          }
+          window.location.reload();
+        });
+        document.addEventListener('click', async (event) => {
+          const button = event.target.closest('.plaid-merge-btn');
+          if (!button) return;
+          const row = button.closest('tr');
+          const select = row ? row.querySelector('.plaid-merge-target') : null;
+          const plaidTransactionId = select?.dataset?.plaidTransactionId || '';
+          const budgetTransactionId = select?.value || '';
+          if (!plaidTransactionId || !budgetTransactionId) return;
+          button.disabled = true;
+          const result = await postForm('plaid_transaction_merge.php', {
+            plaid_transaction_id: plaidTransactionId,
+            budget_transaction_id: budgetTransactionId,
+          });
+          if (!result) {
+            button.disabled = false;
             return;
           }
           window.location.reload();
