@@ -3,6 +3,7 @@ declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../util.php';
 require_once __DIR__ . '/../privacy.php';
+require_once __DIR__ . '/../plaid.php';
 
 // Attempt auto-login from persistent cookie if no active session
 try { $pdo = get_mysql_connection(); auth_login_from_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
@@ -35,9 +36,14 @@ $recentTotalRows = 0;
 $recentTotalPages = 1;
 $recentOffset = 0;
 $accPairs = [];
+$allAccountPairs = [];
 $accounts = [];
 $descriptions = [];
 $accountActivity = [];
+$plaidAvailable = false;
+$plaidItems = [];
+$plaidAccounts = [];
+$plaidSummaryError = '';
 $activityMonths = '0';
 $hideClients = '0';
 $activityMonths = '0';
@@ -414,10 +420,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             // Ensure transactions.status exists (0=scheduled,1=pending,2=posted)
             try { $pdo->exec('ALTER TABLE transactions ADD COLUMN status TINYINT NULL'); } catch (Throwable $e) { /* ignore if exists */ }
             try { privacy_ensure_sync_table($pdo); } catch (Throwable $e) { /* ignore if unavailable */ }
+            try { plaid_ensure_tables($pdo); } catch (Throwable $e) { $plaidSummaryError = 'Plaid setup needs attention.'; }
             $defaultOwner = budget_default_owner();
             budget_ensure_owner_column($pdo, 'transactions', 'owner', $defaultOwner);
             budget_ensure_owner_column($pdo, 'reminders', 'owner', $defaultOwner);
             $owner = $currentUser;
+            $plaidAvailable = plaid_has_config('production');
+            if ($plaidSummaryError === '') {
+                try {
+                    $plaidItems = plaid_fetch_items($pdo, $owner);
+                    $plaidAccounts = plaid_fetch_account_mappings($pdo, $owner);
+                } catch (Throwable $e) {
+                    $plaidSummaryError = 'Unable to load Plaid connections.';
+                }
+            }
             $recentPage = max(1, (int)($_GET['recent_page'] ?? 1));
             // Activity filter persistence
             $validActivityOptions = ['0','3','6','9','12'];
@@ -566,8 +582,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $name = $nm->fetchColumn();
               if ($name !== false) { $accPairs[$filterAccountId] = (string)$name; }
             }
+            $allAccStmt = $pdo->query('SELECT id, name FROM accounts WHERE name IS NOT NULL AND name <> "" ORDER BY name ASC');
+            $allAccountPairs = $allAccStmt ? ($allAccStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: []) : [];
             // Keep names array for modal account select
-            $accounts = array_values($accPairs);
+            $accounts = array_values(!empty($allAccountPairs) ? $allAccountPairs : $accPairs);
 
             // Descriptions (distinct) from last 3 months for autocomplete
             $descSql = "SELECT DISTINCT description FROM transactions
@@ -712,6 +730,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               <a class="btn btn-sm btn-outline-secondary" href="reminders.php<?= ($filterAccountId>0? ('?account_id='.(int)$filterAccountId) : '') ?>">Reminders</a>
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
               <a class="btn btn-sm btn-outline-secondary" href="transactions.php">All transactions</a>
+              <?php if ($plaidAvailable): ?>
+                <button type="button" class="btn btn-sm btn-outline-success" id="connectPlaidBtn">
+                  <i class="bi bi-bank"></i> Connect Plaid
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="syncPlaidBtn" <?= empty($plaidItems) ? 'disabled' : '' ?>>
+                  <i class="bi bi-arrow-repeat"></i> Sync Plaid
+                </button>
+              <?php endif; ?>
             </div>
             <form class="d-flex align-items-center gap-2" method="get" action="" id="dashboardFilterForm">
               <label for="filterAccount" class="form-label mb-0">Account</label>
@@ -723,6 +749,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               </select>
             </form>
           </div>
+          <?php if ($plaidSummaryError !== ''): ?>
+            <div class="alert alert-warning py-2 small" role="alert"><?= htmlspecialchars($plaidSummaryError) ?></div>
+          <?php elseif (!empty($plaidItems)): ?>
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small text-body-secondary">
+              <span class="fw-semibold text-body">Plaid</span>
+              <?php foreach ($plaidItems as $plaidItem): ?>
+                <?php
+                  $plaidName = trim((string)($plaidItem['institution_name'] ?? '')) ?: 'Linked item';
+                  $plaidLastSynced = trim((string)($plaidItem['last_synced_at'] ?? ''));
+                  $plaidStatus = trim((string)($plaidItem['sync_status'] ?? ''));
+                  $plaidError = trim((string)($plaidItem['last_error'] ?? ''));
+                  $plaidTitle = $plaidLastSynced !== '' ? ('Last synced ' . $plaidLastSynced . ' UTC') : 'Not synced yet';
+                  if ($plaidError !== '') { $plaidTitle .= ' | ' . $plaidError; }
+                ?>
+	                  <span class="badge rounded-pill <?= $plaidError !== '' ? 'text-bg-warning' : 'text-bg-light' ?>" title="<?= htmlspecialchars($plaidTitle, ENT_QUOTES, 'UTF-8') ?>">
+	                    <?= htmlspecialchars($plaidName) ?>
+	                    · <?= (int)($plaidItem['mapped_account_count'] ?? 0) ?>/<?= (int)($plaidItem['account_count'] ?? 0) ?> mapped
+	                    · <?= (int)($plaidItem['matched_transaction_count'] ?? 0) ?>/<?= (int)($plaidItem['transaction_count'] ?? 0) ?> matched
+	                    <?= $plaidStatus !== '' && $plaidStatus !== 'active' ? ' · ' . htmlspecialchars($plaidStatus) : '' ?>
+	                  </span>
+	                <?php endforeach; ?>
+	            </div>
+	            <?php if (!empty($plaidAccounts)): ?>
+	              <div class="card mb-3 shadow-sm">
+	                <div class="card-body">
+	                  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+	                    <h3 class="h6 mb-0">Plaid Account Mapping</h3>
+	                  </div>
+	                  <div class="table-responsive">
+	                    <table class="table table-sm align-middle mb-0">
+	                      <thead class="table-light">
+	                        <tr>
+	                          <th scope="col">Plaid Account</th>
+	                          <th scope="col">Budget Account</th>
+	                          <th scope="col" class="text-end">Matches</th>
+	                        </tr>
+	                      </thead>
+	                      <tbody>
+	                        <?php foreach ($plaidAccounts as $plaidAccount): ?>
+	                          <?php
+	                            $plaidAccountLabel = trim((string)($plaidAccount['official_name'] ?? ''));
+	                            if ($plaidAccountLabel === '') { $plaidAccountLabel = trim((string)($plaidAccount['name'] ?? '')); }
+	                            if ($plaidAccountLabel === '') { $plaidAccountLabel = 'Plaid account'; }
+	                            $plaidMask = trim((string)($plaidAccount['mask'] ?? ''));
+	                            $plaidInstitution = trim((string)($plaidAccount['institution_name'] ?? ''));
+	                            $plaidType = trim(implode(' ', array_filter([
+	                              (string)($plaidAccount['type'] ?? ''),
+	                              (string)($plaidAccount['subtype'] ?? ''),
+	                            ])));
+	                            $plaidMappedId = (int)($plaidAccount['local_account_id'] ?? 0);
+	                            $plaidTxCount = (int)($plaidAccount['transaction_count'] ?? 0);
+	                            $plaidMatchedCount = (int)($plaidAccount['matched_transaction_count'] ?? 0);
+	                            $plaidUnmatchedCount = (int)($plaidAccount['unmatched_transaction_count'] ?? 0);
+	                          ?>
+	                          <tr>
+	                            <td>
+	                              <div class="fw-semibold"><?= htmlspecialchars($plaidAccountLabel) ?><?= $plaidMask !== '' ? ' ' . htmlspecialchars('...' . $plaidMask) : '' ?></div>
+	                              <div class="small text-body-secondary">
+	                                <?= htmlspecialchars(trim($plaidInstitution . ($plaidType !== '' ? ' · ' . $plaidType : ''))) ?>
+	                              </div>
+	                            </td>
+	                            <td style="min-width: 260px;">
+	                              <select class="form-select form-select-sm plaid-account-map" data-plaid-account-id="<?= (int)$plaidAccount['id'] ?>">
+	                                <option value="">Not mapped</option>
+	                                <?php foreach ($allAccountPairs as $budgetAccountId => $budgetAccountName): ?>
+	                                  <option value="<?= (int)$budgetAccountId ?>" <?= $plaidMappedId === (int)$budgetAccountId ? 'selected' : '' ?>>
+	                                    <?= htmlspecialchars((string)$budgetAccountName) ?>
+	                                  </option>
+	                                <?php endforeach; ?>
+	                              </select>
+	                            </td>
+	                            <td class="text-end">
+	                              <span class="badge text-bg-light"><?= $plaidMatchedCount ?>/<?= $plaidTxCount ?></span>
+	                              <?php if ($plaidUnmatchedCount > 0): ?>
+	                                <span class="badge text-bg-warning"><?= $plaidUnmatchedCount ?> unmatched</span>
+	                              <?php endif; ?>
+	                            </td>
+	                          </tr>
+	                        <?php endforeach; ?>
+	                      </tbody>
+	                    </table>
+	                  </div>
+	                </div>
+	              </div>
+	            <?php endif; ?>
+	          <?php endif; ?>
           <?php
             // Precompute classes and formatted values for section header totals
             $sumClass = $totalAmount < 0 ? 'text-danger' : 'text-success';
@@ -1277,6 +1389,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
     <?php if ($loggedIn): ?>
       <script src="api_error.js"></script>
+      <?php if ($plaidAvailable): ?>
+        <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+      <?php endif; ?>
       <script>
       (() => {
         const modalEl = document.getElementById('editTxModal');
@@ -1289,6 +1404,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
         const dashboardFilterForm = document.getElementById('dashboardFilterForm');
         const dashboardFilterSelect = document.getElementById('filterAccount');
+        const connectPlaidBtn = document.getElementById('connectPlaidBtn');
+        const syncPlaidBtn = document.getElementById('syncPlaidBtn');
         const accountOptions = <?= json_encode(array_values(array_unique(array_map('strval', $accounts ?? []))), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         const descriptionOptions = <?= json_encode(array_values(array_unique(array_map('strval', $descriptions ?? []))), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         const todayIso = () => {
@@ -1611,6 +1728,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           } else {
             dashboardFilterForm.submit();
           }
+        });
+        const postForm = async (url, values = {}) => {
+          const fd = new FormData();
+          Object.entries(values).forEach(([key, value]) => fd.append(key, value));
+          const res = await fetch(url, { method: 'POST', body: fd });
+          if (!res.ok) return null;
+          return res.json().catch(() => ({}));
+        };
+        connectPlaidBtn && connectPlaidBtn.addEventListener('click', async (event) => {
+          event.preventDefault();
+          if (!window.Plaid) {
+            window.alert('Plaid Link did not load.');
+            return;
+          }
+          connectPlaidBtn.disabled = true;
+          const tokenResponse = await postForm('plaid_link_token.php', { environment: 'production' });
+          connectPlaidBtn.disabled = false;
+          if (!tokenResponse || !tokenResponse.link_token) return;
+          const handler = window.Plaid.create({
+            token: tokenResponse.link_token,
+            onSuccess: async (publicToken, metadata) => {
+              connectPlaidBtn.disabled = true;
+              const res = await fetch('plaid_exchange_token.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  environment: tokenResponse.environment || 'production',
+                  public_token: publicToken,
+                  metadata: metadata || {},
+                }),
+              });
+              connectPlaidBtn.disabled = false;
+              if (!res.ok) return;
+              await res.json().catch(() => ({}));
+              window.location.reload();
+            },
+            onExit: () => {
+              connectPlaidBtn.disabled = false;
+            },
+          });
+          handler.open();
+        });
+        syncPlaidBtn && syncPlaidBtn.addEventListener('click', async (event) => {
+          event.preventDefault();
+          syncPlaidBtn.disabled = true;
+          const result = await postForm('plaid_sync.php');
+          if (!result) {
+            syncPlaidBtn.disabled = false;
+            return;
+          }
+          window.location.reload();
+        });
+        document.addEventListener('change', async (event) => {
+          const select = event.target.closest('.plaid-account-map');
+          if (!select) return;
+          const plaidAccountId = select.dataset.plaidAccountId || '';
+          if (!plaidAccountId) return;
+          select.disabled = true;
+          const result = await postForm('plaid_account_map.php', {
+            plaid_account_id: plaidAccountId,
+            budget_account_id: select.value || '',
+          });
+          if (!result) {
+            select.disabled = false;
+            return;
+          }
+          window.location.reload();
         });
 
         // Header add buttons (Scheduled/Pending/Posted-date)
