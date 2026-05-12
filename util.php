@@ -49,7 +49,11 @@ function get_mysql_connection(): PDO
 
 function budget_canonical_user(string $identifier): string
 {
-    return strtolower(trim($identifier));
+    $identifier = strtolower(trim($identifier));
+    $aliases = [
+        'jr@lillard.dev' => 'jr@lillard.org',
+    ];
+    return $aliases[$identifier] ?? $identifier;
 }
 
 function budget_default_owner(): string
