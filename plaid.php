@@ -425,7 +425,7 @@ function plaid_fetch_merge_candidates(
          WHERE t.owner = :owner
            AND t.account_id = :account_id
            AND t.`date` BETWEEN :start_date AND :end_date
-           AND (:exclude_budget_transaction_id = 0 OR t.id <> :exclude_budget_transaction_id)
+           AND (:exclude_budget_transaction_id_zero = 0 OR t.id <> :exclude_budget_transaction_id)
            AND linked.id IS NULL
            ORDER BY (t.amount = :amount_for_order) DESC,
                   ABS(DATEDIFF(t.`date`, :target_date)) ASC,
@@ -438,6 +438,7 @@ function plaid_fetch_merge_candidates(
         ':account_id' => $localAccountId,
         ':start_date' => $startDate,
         ':end_date' => $endDate,
+        ':exclude_budget_transaction_id_zero' => max(0, $excludeBudgetTransactionId),
         ':exclude_budget_transaction_id' => max(0, $excludeBudgetTransactionId),
         ':amount_for_order' => $amountForOrder,
         ':target_date' => $date,
