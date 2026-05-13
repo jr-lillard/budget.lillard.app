@@ -179,6 +179,10 @@ function plaid_best_effort_exec(PDO $pdo, string $sql): void
 
 function plaid_ensure_tables(PDO $pdo): void
 {
+    budget_ensure_owner_column($pdo, 'transactions', 'owner', budget_default_owner());
+    plaid_best_effort_exec($pdo, 'ALTER TABLE transactions ADD COLUMN status TINYINT NULL');
+    plaid_best_effort_exec($pdo, 'ALTER TABLE transactions MODIFY fm_pk VARCHAR(64) NULL');
+
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS plaid_items (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -921,14 +925,106 @@ function plaid_find_budget_match(
     return ['budget_transaction_id' => null, 'match_method' => $ambiguous ? 'ambiguous' : 'no_match'];
 }
 
-function plaid_upsert_transaction(PDO $pdo, array $item, array $tx): array
+function plaid_budget_fm_pk(string $plaidTransactionId): string
+{
+    return 'plaid:' . substr(sha1($plaidTransactionId), 0, 32);
+}
+
+function plaid_create_or_update_scheduled_transaction(
+    PDO $pdo,
+    string $owner,
+    int $localAccountId,
+    string $plaidTransactionId,
+    ?string $date,
+    ?string $authorizedDate,
+    string $budgetAmount,
+    string $description,
+    ?int $existingBudgetTransactionId = null
+): ?int {
+    if ($localAccountId <= 0 || $plaidTransactionId === '' || !is_numeric($budgetAmount)) {
+        return null;
+    }
+    $owner = budget_canonical_user($owner);
+    $fmPk = plaid_budget_fm_pk($plaidTransactionId);
+    $txDate = $date ?? $authorizedDate ?? gmdate('Y-m-d');
+    $txDate = plaid_valid_date($txDate) ?? gmdate('Y-m-d');
+    $description = trim($description) !== '' ? trim($description) : 'Plaid transaction';
+
+    $candidate = null;
+    if ($existingBudgetTransactionId !== null && $existingBudgetTransactionId > 0) {
+        $stmt = $pdo->prepare('SELECT id, fm_pk, status FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+        $stmt->execute([$existingBudgetTransactionId, $owner]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (is_array($row) && str_starts_with(trim((string)($row['fm_pk'] ?? '')), 'plaid:')) {
+            $candidate = $row;
+        }
+    }
+    if ($candidate === null) {
+        $stmt = $pdo->prepare('SELECT id, fm_pk, status FROM transactions WHERE fm_pk = ? AND owner = ? LIMIT 1');
+        $stmt->execute([$fmPk, $owner]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (is_array($row)) {
+            $candidate = $row;
+        }
+    }
+
+    if ($candidate !== null) {
+        $id = (int)($candidate['id'] ?? 0);
+        $status = $candidate['status'];
+        $statusNorm = ($status === null || $status === '') ? 0 : (int)$status;
+        if ($id > 0 && $statusNorm === 0) {
+            $update = $pdo->prepare(
+                'UPDATE transactions
+                 SET fm_pk = :fm_pk,
+                     account_id = :account_id,
+                     `date` = :date,
+                     amount = :amount,
+                     description = :description,
+                     check_no = NULL,
+                     posted = 0,
+                     status = 0,
+                     updated_at_source = NOW()
+                 WHERE id = :id AND owner = :owner'
+            );
+            $update->execute([
+                ':fm_pk' => $fmPk,
+                ':account_id' => $localAccountId,
+                ':date' => $txDate,
+                ':amount' => $budgetAmount,
+                ':description' => $description,
+                ':id' => $id,
+                ':owner' => $owner,
+            ]);
+        }
+        return $id > 0 ? $id : null;
+    }
+
+    $insert = $pdo->prepare(
+        'INSERT INTO transactions
+            (fm_pk, account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
+         VALUES
+            (:fm_pk, :account_id, :date, :amount, :description, NULL, 0, 0, :owner, NOW(), NOW())'
+    );
+    $insert->execute([
+        ':fm_pk' => $fmPk,
+        ':account_id' => $localAccountId,
+        ':date' => $txDate,
+        ':amount' => $budgetAmount,
+        ':description' => $description,
+        ':owner' => $owner,
+    ]);
+    $id = (int)$pdo->lastInsertId();
+    return $id > 0 ? $id : null;
+}
+
+function plaid_upsert_transaction(PDO $pdo, array $item, array $tx, bool $autoCreate = false): array
 {
     $plaidItemId = (int)$item['id'];
     $owner = budget_canonical_user((string)$item['owner']);
     $transactionId = trim((string)($tx['transaction_id'] ?? ''));
     $plaidAccountId = trim((string)($tx['account_id'] ?? ''));
     if ($transactionId === '' || $plaidAccountId === '') {
-        return ['stored' => false, 'matched' => false, 'unmatched' => false, 'unmapped' => false, 'match_method' => 'skipped'];
+        return ['stored' => false, 'matched' => false, 'created' => false, 'unmatched' => false, 'unmapped' => false, 'match_method' => 'skipped'];
     }
     $localAccountId = plaid_local_account_for_transaction($pdo, $plaidItemId, $plaidAccountId);
     $date = plaid_valid_date(trim((string)($tx['date'] ?? '')));
@@ -937,19 +1033,74 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx): array
     $budgetAmount = plaid_transaction_budget_amount($tx);
     $description = plaid_transaction_description($tx);
     $rawJson = json_encode($tx, JSON_UNESCAPED_SLASHES);
-    $match = plaid_find_budget_match(
-        $pdo,
-        $owner,
-        $plaidItemId,
-        $transactionId,
-        $localAccountId,
-        $date,
-        $authorizedDate,
-        $budgetAmount,
-        $description
+
+    $existingStmt = $pdo->prepare(
+        'SELECT budget_transaction_id, match_method
+         FROM plaid_transactions
+         WHERE plaid_item_id = ? AND plaid_transaction_id = ?
+         LIMIT 1'
     );
-    $budgetTransactionId = !empty($match['budget_transaction_id']) ? (int)$match['budget_transaction_id'] : null;
-    $matchMethod = (string)($match['match_method'] ?? 'no_match');
+    $existingStmt->execute([$plaidItemId, $transactionId]);
+    $existing = $existingStmt->fetch(PDO::FETCH_ASSOC);
+    $existingBudgetTransactionId = is_array($existing) && (int)($existing['budget_transaction_id'] ?? 0) > 0
+        ? (int)$existing['budget_transaction_id']
+        : null;
+    $existingMatchMethod = is_array($existing) ? (string)($existing['match_method'] ?? '') : '';
+
+    $created = false;
+    if ($existingBudgetTransactionId !== null && in_array($existingMatchMethod, ['created', 'manual_merge'], true)) {
+        $budgetTransactionId = $existingBudgetTransactionId;
+        $matchMethod = $existingMatchMethod;
+        if ($existingMatchMethod === 'created') {
+            plaid_create_or_update_scheduled_transaction(
+                $pdo,
+                $owner,
+                (int)($localAccountId ?? 0),
+                $transactionId,
+                $date,
+                $authorizedDate,
+                $budgetAmount,
+                $description,
+                $existingBudgetTransactionId
+            );
+            $created = true;
+        }
+    } else {
+        $match = plaid_find_budget_match(
+            $pdo,
+            $owner,
+            $plaidItemId,
+            $transactionId,
+            $localAccountId,
+            $date,
+            $authorizedDate,
+            $budgetAmount,
+            $description
+        );
+        $budgetTransactionId = !empty($match['budget_transaction_id']) ? (int)$match['budget_transaction_id'] : null;
+        $matchMethod = (string)($match['match_method'] ?? 'no_match');
+
+        if ($budgetTransactionId === null
+            && $autoCreate
+            && $localAccountId !== null
+            && in_array($matchMethod, ['no_match', 'ambiguous'], true)) {
+            $createdBudgetTransactionId = plaid_create_or_update_scheduled_transaction(
+                $pdo,
+                $owner,
+                $localAccountId,
+                $transactionId,
+                $date,
+                $authorizedDate,
+                $budgetAmount,
+                $description
+            );
+            if ($createdBudgetTransactionId !== null) {
+                $budgetTransactionId = $createdBudgetTransactionId;
+                $matchMethod = 'created';
+                $created = true;
+            }
+        }
+    }
 
     $map = $pdo->prepare(
         'INSERT INTO plaid_transactions
@@ -992,7 +1143,8 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx): array
 
     return [
         'stored' => true,
-        'matched' => $budgetTransactionId !== null,
+        'matched' => $budgetTransactionId !== null && !$created,
+        'created' => $created,
         'unmatched' => $budgetTransactionId === null && !in_array($matchMethod, ['unmapped', 'skipped'], true),
         'unmapped' => $matchMethod === 'unmapped',
         'match_method' => $matchMethod,
@@ -1083,12 +1235,37 @@ function plaid_remove_transaction(PDO $pdo, array $item, array $removed): bool
     if ($transactionId === '') {
         return false;
     }
+    $existing = $pdo->prepare(
+        'SELECT pt.budget_transaction_id, pt.match_method, pi.owner
+         FROM plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         WHERE pt.plaid_item_id = ? AND pt.plaid_transaction_id = ?
+         LIMIT 1'
+    );
+    $existing->execute([$plaidItemId, $transactionId]);
+    $row = $existing->fetch(PDO::FETCH_ASSOC);
     $update = $pdo->prepare(
         'UPDATE plaid_transactions
          SET removed = 1, budget_transaction_id = NULL, match_method = "removed", matched_at = NULL
          WHERE plaid_item_id = ? AND plaid_transaction_id = ?'
     );
     $update->execute([$plaidItemId, $transactionId]);
+
+    $budgetTransactionId = is_array($row) ? (int)($row['budget_transaction_id'] ?? 0) : 0;
+    $matchMethod = is_array($row) ? (string)($row['match_method'] ?? '') : '';
+    $owner = is_array($row) ? budget_canonical_user((string)($row['owner'] ?? '')) : '';
+    if ($budgetTransactionId > 0 && $matchMethod === 'created' && $owner !== '') {
+        $tx = $pdo->prepare('SELECT fm_pk, status FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+        $tx->execute([$budgetTransactionId, $owner]);
+        $budgetRow = $tx->fetch(PDO::FETCH_ASSOC);
+        $fmPk = trim((string)($budgetRow['fm_pk'] ?? ''));
+        $status = $budgetRow['status'] ?? null;
+        $statusNorm = ($status === null || $status === '') ? 0 : (int)$status;
+        if (is_array($budgetRow) && str_starts_with($fmPk, 'plaid:') && $statusNorm === 0) {
+            $delete = $pdo->prepare('DELETE FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+            $delete->execute([$budgetTransactionId, $owner]);
+        }
+    }
     return true;
 }
 
@@ -1107,7 +1284,9 @@ function plaid_tally_match_result(array &$summary, array $result): void
         return;
     }
     $summary['stored']++;
-    if (!empty($result['matched'])) {
+    if (!empty($result['created'])) {
+        $summary['created']++;
+    } elseif (!empty($result['matched'])) {
         $summary['matched']++;
     } elseif (!empty($result['unmapped'])) {
         $summary['unmapped']++;
@@ -1126,6 +1305,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
         'accounts' => 0,
         'stored' => 0,
         'matched' => 0,
+        'created' => 0,
         'unmatched' => 0,
         'unmapped' => 0,
         'removed' => 0,
@@ -1135,6 +1315,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
     try {
         $summary['accounts'] = plaid_refresh_accounts($pdo, $item);
         $cursor = trim((string)($item['transactions_cursor'] ?? ''));
+        $autoCreateFromPlaid = $cursor !== '';
         $nextCursor = $cursor;
         $hasMore = true;
         while ($hasMore) {
@@ -1153,7 +1334,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
             $pdo->beginTransaction();
             foreach ($added as $tx) {
                 if (is_array($tx)) {
-                    plaid_tally_match_result($summary, plaid_upsert_transaction($pdo, $item, $tx));
+                    plaid_tally_match_result($summary, plaid_upsert_transaction($pdo, $item, $tx, $autoCreateFromPlaid));
                 }
             }
             foreach ($modified as $tx) {
