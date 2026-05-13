@@ -101,6 +101,46 @@ function budget_normalize_phone_for_sms(string $num): string
     return '';
 }
 
+/**
+ * Look up the canonical username attached to a phone number.
+ */
+function budget_lookup_user_by_phone(PDO $pdo, string $phone): ?string
+{
+    $target = budget_normalize_phone_for_sms($phone);
+    if ($target === '') {
+        return null;
+    }
+
+    try {
+        $stmt = $pdo->query('SELECT username, phone FROM users WHERE phone IS NOT NULL AND phone <> "" ORDER BY username ASC');
+        $matches = [];
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $storedPhone = budget_normalize_phone_for_sms((string)($row['phone'] ?? ''));
+            if ($storedPhone !== $target) {
+                continue;
+            }
+            $username = budget_canonical_user((string)($row['username'] ?? ''));
+            if ($username !== '') {
+                $matches[] = $username;
+            }
+        }
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    $matches = array_values(array_unique($matches));
+    if (empty($matches)) {
+        return null;
+    }
+
+    $defaultOwner = budget_default_owner();
+    if (in_array($defaultOwner, $matches, true)) {
+        return $defaultOwner;
+    }
+
+    return $matches[0];
+}
+
 function budget_ensure_owner_column(PDO $pdo, string $table, string $column = 'owner', ?string $assignOwnerForNull = null): void
 {
     if (!preg_match('/^[A-Za-z0-9_]+$/', $table) || !preg_match('/^[A-Za-z0-9_]+$/', $column)) {

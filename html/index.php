@@ -50,35 +50,23 @@ $hideClients = '0';
 $activityMonths = '0';
 
 /**
- * Send a one-time login code to the given email address.
+ * Send a one-time login code to the given phone number.
  * Returns [bool ok, string message].
  */
-function budget_send_login_code(string $email, string $code): array
+function budget_send_login_code_to_phone(string $phone, string $code): array
 {
-    $subject = 'Budget login code';
-    $safeCode = htmlspecialchars($code, ENT_QUOTES, 'UTF-8');
-    $html = <<<HTML
-<p>Your Budget login code is <strong style="font-size: 1.25rem;">{$safeCode}</strong>.</p>
-<p>Enter this code in the Budget app within 10 minutes.</p>
-HTML;
-    $text = "Your Budget login code is {$code}.\nEnter this code in the Budget app within 10 minutes.\n";
-
-    try {
-        $pdo = get_mysql_connection();
-        $phone = budget_lookup_phone($pdo, $email);
-    } catch (Throwable $e) {
-        $phone = '';
+    $normalizedPhone = budget_normalize_phone_for_sms($phone);
+    if ($normalizedPhone === '') {
+        return [false, 'Invalid phone number'];
     }
 
-    if ($phone !== '') {
-        [$smsOk, $smsErr] = send_sms_via_smtp2go($phone, "Budget login code: {$code}. Use within 10 minutes.");
-        if ($smsOk) {
-            return [true, 'Sent via SMS'];
-        }
-        error_log('SMS code send failed for ' . $email . ': ' . (string)$smsErr);
+    [$smsOk, $smsErr] = send_sms_via_smtp2go($normalizedPhone, "Budget login code: {$code}. Use within 10 minutes.");
+    if ($smsOk) {
+        return [true, 'Sent via SMS'];
     }
 
-    return send_mail_via_smtp2go($email, $subject, $html, $text, null);
+    error_log('SMS code send failed for ' . $normalizedPhone . ': ' . (string)$smsErr);
+    return [false, (string)$smsErr];
 }
 
 /**
@@ -180,8 +168,8 @@ $loginFlash = $_SESSION['login_flash'] ?? [];
 unset($_SESSION['login_flash']);
 
 $loginFlow = $_SESSION['login_flow'] ?? null;
-$loginStep = 'email';
-if (is_array($loginFlow) && isset($loginFlow['email'], $loginFlow['code_hash'], $loginFlow['expires']) && (int)$loginFlow['expires'] >= time()) {
+$loginStep = 'phone';
+if (is_array($loginFlow) && isset($loginFlow['username'], $loginFlow['phone'], $loginFlow['code_hash'], $loginFlow['expires']) && (int)$loginFlow['expires'] >= time()) {
     $loginStep = 'code';
 } else {
     $loginFlow = null;
@@ -190,7 +178,7 @@ if (is_array($loginFlow) && isset($loginFlow['email'], $loginFlow['code_hash'], 
 $afterResponseTasks = [];
 $flashMessage = trim((string)($loginFlash['message'] ?? ''));
 $flashType = $loginFlash['type'] ?? '';
-$emailErrorMessage = ($loginStep === 'email' && $flashType === 'danger') ? $flashMessage : '';
+$phoneErrorMessage = ($loginStep === 'phone' && $flashType === 'danger') ? $flashMessage : '';
 $codeErrorMessage = ($loginStep === 'code' && $flashType === 'danger') ? $flashMessage : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
@@ -198,35 +186,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     $self = (string)($_SERVER['PHP_SELF'] ?? 'index.php');
 
     if ($mode === 'request-code') {
-        $email = trim((string)($_POST['email'] ?? ''));
-        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter a valid email address.'];
+        $phoneInput = trim((string)($_POST['phone'] ?? ''));
+        $phone = budget_normalize_phone_for_sms($phoneInput);
+        if ($phone === '') {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter a valid phone number.'];
             unset($_SESSION['login_flow']);
             budget_redirect($self);
         }
 
-        $canonicalEmail = budget_canonical_user($email);
+        try {
+            $pdo = $pdo ?? get_mysql_connection();
+            $username = budget_lookup_user_by_phone($pdo, $phone);
+        } catch (Throwable $e) {
+            error_log('Phone login lookup failed: ' . $e->getMessage());
+            $username = null;
+        }
+
+        if ($username === null || $username === '') {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'No account found for that phone number.'];
+            unset($_SESSION['login_flow']);
+            budget_redirect($self);
+        }
 
         $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         $_SESSION['login_flow'] = [
-            'email' => $canonicalEmail,
+            'username' => budget_canonical_user($username),
+            'phone' => $phone,
             'code_hash' => hash('sha256', $code),
             'expires' => time() + 600,
             'attempts' => 0,
             'last_sent' => time(),
         ];
         unset($_SESSION['login_flash']);
-        $afterResponseTasks[] = static function () use ($email, $code): void {
-            [$ok, $err] = budget_send_login_code($email, $code);
+        $afterResponseTasks[] = static function () use ($phone, $code): void {
+            [$ok, $err] = budget_send_login_code_to_phone($phone, $code);
             if (!$ok) {
-                error_log(sprintf('Login code email failed for %s: %s', $email, (string)$err));
+                error_log(sprintf('Login code SMS failed for %s: %s', $phone, (string)$err));
             }
         };
         budget_redirect($self, $afterResponseTasks);
     } elseif ($mode === 'verify-code') {
         $flow = $_SESSION['login_flow'] ?? null;
         $codeDigits = preg_replace('/[^0-9]/', '', (string)($_POST['code'] ?? ''));
-        if (!is_array($flow) || !isset($flow['email'], $flow['code_hash'], $flow['expires'])) {
+        if (!is_array($flow) || !isset($flow['username'], $flow['phone'], $flow['code_hash'], $flow['expires'])) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
             unset($_SESSION['login_flow']);
             budget_redirect($self);
@@ -237,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             budget_redirect($self);
         }
         if (strlen($codeDigits) !== 6) {
-            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter the 6-digit code from the email.'];
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Enter the 6-digit code from the text message.'];
             budget_redirect($self);
         }
         $expected = (string)$flow['code_hash'];
@@ -256,11 +258,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         }
 
         unset($_SESSION['login_flow']);
-        $email = budget_canonical_user((string)$flow['email']);
-        $_SESSION['username'] = $email;
+        $username = budget_canonical_user((string)$flow['username']);
+        $_SESSION['username'] = $username;
         try {
             $pdo = $pdo ?? get_mysql_connection();
-            auth_issue_remember_cookie($pdo, $email);
+            auth_issue_remember_cookie($pdo, $username);
         } catch (Throwable $e) {
             // ignore remember-me errors
         }
@@ -268,33 +270,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         budget_redirect($self);
     } elseif ($mode === 'resend-code') {
         $flow = $_SESSION['login_flow'] ?? null;
-        if (!is_array($flow) || empty($flow['email'])) {
+        if (!is_array($flow) || empty($flow['username']) || empty($flow['phone'])) {
             $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
             unset($_SESSION['login_flow']);
             budget_redirect($self);
         }
-        $email = (string)$flow['email'];
+        $username = budget_canonical_user((string)$flow['username']);
+        $phone = budget_normalize_phone_for_sms((string)$flow['phone']);
+        if ($phone === '') {
+            $_SESSION['login_flash'] = ['type' => 'danger', 'message' => 'Request a new login code to continue.'];
+            unset($_SESSION['login_flow']);
+            budget_redirect($self);
+        }
         $lastSent = (int)($flow['last_sent'] ?? 0);
         if ($lastSent > time() - 30) {
             budget_redirect($self);
         }
         $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         $_SESSION['login_flow'] = [
-            'email' => $email,
+            'username' => $username,
+            'phone' => $phone,
             'code_hash' => hash('sha256', $code),
             'expires' => time() + 600,
             'attempts' => 0,
             'last_sent' => time(),
         ];
         unset($_SESSION['login_flash']);
-        $afterResponseTasks[] = static function () use ($email, $code): void {
-            [$ok, $err] = budget_send_login_code($email, $code);
+        $afterResponseTasks[] = static function () use ($phone, $code): void {
+            [$ok, $err] = budget_send_login_code_to_phone($phone, $code);
             if (!$ok) {
-                error_log(sprintf('Login resend failed for %s: %s', $email, (string)$err));
+                error_log(sprintf('Login SMS resend failed for %s: %s', $phone, (string)$err));
             }
         };
         budget_redirect($self, $afterResponseTasks);
-    } elseif ($mode === 'change-email') {
+    } elseif ($mode === 'change-phone' || $mode === 'change-email') {
         unset($_SESSION['login_flow']);
         unset($_SESSION['login_flash']);
         budget_redirect($self);
@@ -1205,19 +1214,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       <?php else: ?>
         <div class="min-vh-100 d-flex align-items-center justify-content-center">
           <div class="w-100" style="max-width: 360px;">
-            <?php if ($loginStep === 'email'): ?>
+            <?php if ($loginStep === 'phone'): ?>
               <form method="post" class="w-100" novalidate>
                 <input type="hidden" name="mode" value="request-code">
-                <input type="email"
-                       name="email"
-                       class="form-control text-center<?= $emailErrorMessage !== '' ? ' is-invalid' : '' ?>"
-                       aria-label="Email address"
-                       autocomplete="email"
+                <input type="tel"
+                       name="phone"
+                       class="form-control text-center<?= $phoneErrorMessage !== '' ? ' is-invalid' : '' ?>"
+                       aria-label="Phone number"
+                       inputmode="tel"
+                       autocomplete="tel"
                        autocorrect="off"
                        autocapitalize="none"
                        spellcheck="false"
                        required
-                       autofocus<?= $emailErrorMessage !== '' ? ' aria-invalid="true" title="' . htmlspecialchars($emailErrorMessage, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>
+                       autofocus<?= $phoneErrorMessage !== '' ? ' aria-invalid="true" title="' . htmlspecialchars($phoneErrorMessage, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>
                 <button type="submit" class="visually-hidden" aria-hidden="true">Submit</button>
               </form>
             <?php else: ?>
@@ -1267,7 +1277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         input.addEventListener('keydown', (event) => {
           if (event.key === 'Escape') {
             event.preventDefault();
-            submitHiddenPost('change-email');
+            submitHiddenPost('change-phone');
           }
           if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
             event.preventDefault();
