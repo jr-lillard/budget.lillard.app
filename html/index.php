@@ -164,6 +164,67 @@ function budget_privacy_status_cell_html(array $row): string
         . '</span>';
 }
 
+function budget_plaid_status_cell_html(array $row): string
+{
+    $plaidRowId = (int)($row['plaid_transaction_row_id'] ?? 0);
+    if ($plaidRowId <= 0) {
+        return '';
+    }
+
+    $matchMethod = trim((string)($row['plaid_match_method'] ?? ''));
+    $pending = (int)($row['plaid_pending'] ?? 0) === 1;
+    $linkCount = max(1, (int)($row['plaid_link_count'] ?? 1));
+    $statusClass = 'plaid-status-muted';
+    $label = 'linked';
+
+    if ($linkCount > 1) {
+        $label = 'multi';
+        $statusClass = 'plaid-status-warning';
+    } elseif ($pending) {
+        $label = 'pending';
+        $statusClass = 'plaid-status-pending';
+    } elseif ($matchMethod === 'created') {
+        $label = 'created';
+        $statusClass = 'plaid-status-created';
+    } elseif ($matchMethod === 'manual_merge') {
+        $label = 'merged';
+        $statusClass = 'plaid-status-manual';
+    } elseif (str_starts_with($matchMethod, 'amount_')) {
+        $label = 'matched';
+        $statusClass = 'plaid-status-matched';
+    } elseif ($matchMethod !== '') {
+        $label = str_replace('_', ' ', $matchMethod);
+    }
+
+    $titleParts = ['Plaid status: ' . $label];
+    if ($matchMethod !== '') {
+        $titleParts[] = 'Match method: ' . $matchMethod;
+    }
+    if ($linkCount > 1) {
+        $titleParts[] = $linkCount . ' active Plaid links';
+    }
+    $institution = trim((string)($row['plaid_institution_name'] ?? ''));
+    $account = trim((string)($row['plaid_account_name'] ?? ''));
+    $mask = trim((string)($row['plaid_account_mask'] ?? ''));
+    $accountLabel = trim($institution . ($account !== '' ? ' | ' . $account : ''));
+    if ($mask !== '') {
+        $accountLabel .= ' ...' . $mask;
+    }
+    if ($accountLabel !== '') {
+        $titleParts[] = $accountLabel;
+    }
+    $plaidDate = trim((string)($row['plaid_date'] ?? ''));
+    if ($plaidDate !== '') {
+        $titleParts[] = 'Plaid date: ' . $plaidDate;
+    }
+
+    return '<span class="plaid-status-text ' . htmlspecialchars($statusClass, ENT_QUOTES, 'UTF-8') . '"'
+        . ' title="' . htmlspecialchars(implode(' | ', $titleParts), ENT_QUOTES, 'UTF-8') . '"'
+        . '>'
+        . htmlspecialchars($label, ENT_QUOTES, 'UTF-8')
+        . '</span>';
+}
+
 $loginFlash = $_SESSION['login_flash'] ?? [];
 unset($_SESSION['login_flash']);
 
@@ -366,19 +427,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       .stale-scheduled-row .tx-click-edit {
         opacity: 0.55;
       }
-      .privacy-status-col {
+      .privacy-status-col,
+      .plaid-status-col {
         width: 6.75rem;
         white-space: nowrap;
       }
-      .privacy-status-cell {
+      .privacy-status-cell,
+      .plaid-status-cell {
         text-align: center;
       }
-      .privacy-status-text {
+      .privacy-status-text,
+      .plaid-status-text {
         display: inline-block;
         min-width: 5.75rem;
         font-size: 0.68rem;
         font-weight: 600;
-        letter-spacing: 0.08em;
+        letter-spacing: 0;
         text-transform: uppercase;
         color: var(--bs-secondary-color);
       }
@@ -394,6 +458,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
       }
       .privacy-status-queued {
         color: var(--bs-info-text-emphasis);
+      }
+      .plaid-status-matched,
+      .plaid-status-manual {
+        color: var(--bs-success-text-emphasis);
+      }
+      .plaid-status-created,
+      .plaid-status-pending,
+      .plaid-status-warning {
+        color: var(--bs-warning-text-emphasis);
       }
     </style>
   </head>
@@ -505,10 +578,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                        pts.latest_event_at AS privacy_event_at,
                        pts.last_checked_at AS privacy_last_checked_at,
                        pts.sync_status AS privacy_sync_status,
-                       pts.last_error AS privacy_sync_error
+                       pts.last_error AS privacy_sync_error,
+                       pt.id AS plaid_transaction_row_id,
+                       pt.plaid_transaction_id AS plaid_transaction_token,
+                       pt.match_method AS plaid_match_method,
+                       pt.pending AS plaid_pending,
+                       pt.date AS plaid_date,
+                       pt.authorized_date AS plaid_authorized_date,
+                       pt.amount AS plaid_amount,
+                       pt.name AS plaid_name,
+                       pt.merchant_name AS plaid_merchant_name,
+                       pt_link.plaid_link_count,
+                       pi.institution_name AS plaid_institution_name,
+                       pa.name AS plaid_account_name,
+                       pa.mask AS plaid_account_mask
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id
                     LEFT JOIN privacy_transaction_sync pts ON pts.transaction_token = t.fm_pk
+                    LEFT JOIN (
+                        SELECT budget_transaction_id, MIN(id) AS plaid_transaction_row_id, COUNT(*) AS plaid_link_count
+                        FROM plaid_transactions
+                        WHERE removed = 0 AND budget_transaction_id IS NOT NULL
+                        GROUP BY budget_transaction_id
+                    ) pt_link ON pt_link.budget_transaction_id = t.id
+                    LEFT JOIN plaid_transactions pt ON pt.id = pt_link.plaid_transaction_row_id
+                    LEFT JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+                    LEFT JOIN plaid_accounts pa
+                      ON pa.plaid_item_id = pt.plaid_item_id
+                     AND pa.plaid_account_id = pt.plaid_account_id
                     WHERE t.owner = ?';
             if ($filterAccountId > 0) { $sql .= ' AND t.account_id = ?'; }
             $sql .= ' ORDER BY COALESCE(t.status, CASE WHEN t.posted = 1 THEN 2 ELSE 1 END) ASC, t.`date` DESC, t.updated_at DESC LIMIT ? OFFSET ?';
@@ -936,7 +1033,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $recentAccountCellClass = trim($recentAccountColumnClass . ' tx-click-edit');
             $recentPrivacyColumnClass = 'privacy-status-col privacy-status-cell';
             $recentPrivacyCellClass = trim($recentPrivacyColumnClass . ' tx-click-edit');
-            $recentSpacerColspan = $showRecentAccountColumn ? 6 : 5;
+            $recentPlaidColumnClass = 'plaid-status-col plaid-status-cell';
+            $recentPlaidCellClass = trim($recentPlaidColumnClass . ' tx-click-edit');
+            $recentSpacerColspan = $showRecentAccountColumn ? 7 : 6;
             $recentHasPrev = $recentPage > 1;
             $recentHasNext = $recentPage < $recentTotalPages;
             $recentPageFrom = $recentTotalRows > 0 ? ($recentOffset + 1) : 0;
@@ -969,6 +1068,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <th scope="col" class="<?= $recentAccountColumnClass ?>">Account</th>
                     <th scope="col">Description</th>
                     <th scope="col" class="<?= $recentPrivacyColumnClass ?>">Privacy</th>
+                    <th scope="col" class="<?= $recentPlaidColumnClass ?>">Plaid</th>
                     <th scope="col" class="text-end">Amount</th>
                     <th scope="col" class="text-end">Actions</th>
                   </tr>
@@ -994,6 +1094,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="<?= $recentAccountColumnClass ?>"></td>
                       <td></td>
                       <td class="<?= $recentPrivacyColumnClass ?>"></td>
+                      <td class="<?= $recentPlaidColumnClass ?>"></td>
                       <td class="text-end"><strong class="<?= $projClass ?>">$<?= $projFmt ?></strong></td>
                       <td class="text-end">
                         <button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="0" title="New scheduled transaction">
@@ -1012,6 +1113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $txId = (int)($row['id'] ?? 0);
                         $staleScheduledClass = ($date !== '' && $date < $staleScheduledCutoff) ? 'stale-scheduled-row' : '';
                         $privacyStatusCell = budget_privacy_status_cell_html($row);
+                        $plaidStatusCell = budget_plaid_status_cell_html($row);
                       ?>
                       <?php
                         $dateCell = '';
@@ -1039,6 +1141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                         <td class="<?= $recentPrivacyCellClass ?>" role="button"><?= $privacyStatusCell ?></td>
+                        <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
                           <div class="dropdown">
@@ -1067,6 +1170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="<?= $recentAccountColumnClass ?>"></td>
                       <td></td>
                       <td class="<?= $recentPrivacyColumnClass ?>"></td>
+                      <td class="<?= $recentPlaidColumnClass ?>"></td>
                       <td class="text-end"><strong class="<?= $sumClass ?>">$<?= $sumFmt ?></strong></td>
                       <td class="text-end">
                         <button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="1" title="New pending transaction">
@@ -1084,6 +1188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                         $txId = (int)($row['id'] ?? 0);
                         $privacyStatusCell = budget_privacy_status_cell_html($row);
+                        $plaidStatusCell = budget_plaid_status_cell_html($row);
                       ?>
                       <?php
                         $dateCell = '';
@@ -1111,6 +1216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
                         <td class="<?= $recentPrivacyCellClass ?>" role="button"><?= $privacyStatusCell ?></td>
+                        <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
                           <div class="dropdown">
@@ -1136,6 +1242,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     $postedSummaryShown = false;
                     $postedHeaderAccountCell = '<td' . ($recentAccountColumnClass !== '' ? ' class="' . $recentAccountColumnClass . '"' : '') . '></td>';
                     $postedHeaderPrivacyCell = '<td class="' . $recentPrivacyColumnClass . '"></td>';
+                    $postedHeaderPlaidCell = '<td class="' . $recentPlaidColumnClass . '"></td>';
                     foreach ($postedRows as $row):
                       $date = $row['date'] ?? '';
                       $acct = $row['account_name'] ?? '';
@@ -1144,6 +1251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                       $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                       $txId = (int)($row['id'] ?? 0);
+                      $plaidStatusCell = budget_plaid_status_cell_html($row);
                       $isNewGroup = ($date !== $currentDate);
                       $dateCell = '';
                       if ($isNewGroup) {
@@ -1155,6 +1263,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                            . $postedHeaderAccountCell
                            . '<td></td>'
                            . $postedHeaderPrivacyCell
+                           . $postedHeaderPlaidCell
                            . '<td class="text-end">' . (!$postedSummaryShown ? ('<strong class="' . $postedClass . '">$' . $postedFmt . '</strong>') : '') . '</td>'
                            . '<td class="text-end">'
                            .   '<button class="btn btn-sm btn-outline-success tx-header-add" type="button" data-status="2" data-date="' . htmlspecialchars((string)$date) . '" title="New posted transaction on this date">'
@@ -1189,6 +1298,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
                       <td class="<?= $recentPrivacyCellClass ?>" role="button"></td>
+                      <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                       <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                       <td class="text-end">
                         <div class="dropdown">
