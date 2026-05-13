@@ -824,6 +824,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             </div>
           <?php endif; ?>
 
+          <?php
+            $plaidUnmatchedTotal = 0;
+            if (!empty($plaidAccounts)) {
+              foreach ($plaidAccounts as $plaidAccountSummary) {
+                $plaidUnmatchedTotal += (int)($plaidAccountSummary['unmatched_transaction_count'] ?? 0);
+              }
+            }
+            $showPlaidTools = $plaidAvailable || $plaidSummaryError !== '' || !empty($plaidItems);
+          ?>
           <div class="d-flex flex-wrap align-items-center justify-content-between mb-2 gap-2">
             <div class="d-flex align-items-center gap-2">
               <h2 class="h5 mb-0">Recent Transactions</h2>
@@ -838,12 +847,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               <a class="btn btn-sm btn-outline-secondary" href="reminders.php<?= ($filterAccountId>0? ('?account_id='.(int)$filterAccountId) : '') ?>">Reminders</a>
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
               <a class="btn btn-sm btn-outline-secondary" href="transactions.php">All transactions</a>
-              <?php if ($plaidAvailable): ?>
-                <button type="button" class="btn btn-sm btn-outline-success" id="connectPlaidBtn">
-                  <i class="bi bi-bank"></i> Connect Plaid
-                </button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="syncPlaidBtn" <?= empty($plaidItems) ? 'disabled' : '' ?>>
-                  <i class="bi bi-arrow-repeat"></i> Sync Plaid
+              <?php if ($showPlaidTools): ?>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#plaidToolsPanel"
+                        aria-expanded="false"
+                        aria-controls="plaidToolsPanel">
+                  <i class="bi bi-bank"></i> Plaid
+                  <?php if ($plaidUnmatchedTotal > 0): ?>
+                    <span class="badge text-bg-warning ms-1"><?= $plaidUnmatchedTotal ?></span>
+                  <?php endif; ?>
                 </button>
               <?php endif; ?>
             </div>
@@ -857,29 +871,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               </select>
             </form>
           </div>
-          <?php if ($plaidSummaryError !== ''): ?>
-            <div class="alert alert-warning py-2 small" role="alert"><?= htmlspecialchars($plaidSummaryError) ?></div>
-          <?php elseif (!empty($plaidItems)): ?>
-            <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small text-body-secondary">
-              <span class="fw-semibold text-body">Plaid</span>
-              <?php foreach ($plaidItems as $plaidItem): ?>
-                <?php
-                  $plaidName = trim((string)($plaidItem['institution_name'] ?? '')) ?: 'Linked item';
-                  $plaidLastSynced = trim((string)($plaidItem['last_synced_at'] ?? ''));
-                  $plaidStatus = trim((string)($plaidItem['sync_status'] ?? ''));
-                  $plaidError = trim((string)($plaidItem['last_error'] ?? ''));
-                  $plaidTitle = $plaidLastSynced !== '' ? ('Last synced ' . $plaidLastSynced . ' UTC') : 'Not synced yet';
-                  if ($plaidError !== '') { $plaidTitle .= ' | ' . $plaidError; }
-                ?>
-	                  <span class="badge rounded-pill <?= $plaidError !== '' ? 'text-bg-warning' : 'text-bg-light' ?>" title="<?= htmlspecialchars($plaidTitle, ENT_QUOTES, 'UTF-8') ?>">
-	                    <?= htmlspecialchars($plaidName) ?>
-	                    · <?= (int)($plaidItem['mapped_account_count'] ?? 0) ?>/<?= (int)($plaidItem['account_count'] ?? 0) ?> mapped
-	                    · <?= (int)($plaidItem['matched_transaction_count'] ?? 0) ?>/<?= (int)($plaidItem['transaction_count'] ?? 0) ?> matched
-	                    <?= $plaidStatus !== '' && $plaidStatus !== 'active' ? ' · ' . htmlspecialchars($plaidStatus) : '' ?>
-	                  </span>
-	                <?php endforeach; ?>
-	            </div>
-	            <?php if (!empty($plaidAccounts)): ?>
+          <?php if ($showPlaidTools): ?>
+            <div class="collapse" id="plaidToolsPanel">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                <div class="small text-body-secondary">
+                  <span class="fw-semibold text-body">Plaid</span>
+                  <?php if ($plaidUnmatchedTotal > 0): ?>
+                    <span class="badge text-bg-warning ms-1"><?= $plaidUnmatchedTotal ?> unmatched</span>
+                  <?php endif; ?>
+                </div>
+                <?php if ($plaidAvailable): ?>
+                  <div class="btn-group btn-group-sm" role="group" aria-label="Plaid actions">
+                    <button type="button" class="btn btn-outline-success" id="connectPlaidBtn">
+                      <i class="bi bi-bank"></i> Connect
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="syncPlaidBtn" <?= empty($plaidItems) ? 'disabled' : '' ?>>
+                      <i class="bi bi-arrow-repeat"></i> Sync
+                    </button>
+                  </div>
+                <?php endif; ?>
+              </div>
+              <?php if ($plaidSummaryError !== ''): ?>
+                <div class="alert alert-warning py-2 small" role="alert"><?= htmlspecialchars($plaidSummaryError) ?></div>
+              <?php elseif (!empty($plaidItems)): ?>
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small text-body-secondary">
+                  <?php foreach ($plaidItems as $plaidItem): ?>
+                    <?php
+                      $plaidName = trim((string)($plaidItem['institution_name'] ?? '')) ?: 'Linked item';
+                      $plaidLastSynced = trim((string)($plaidItem['last_synced_at'] ?? ''));
+                      $plaidStatus = trim((string)($plaidItem['sync_status'] ?? ''));
+                      $plaidError = trim((string)($plaidItem['last_error'] ?? ''));
+                      $plaidTitle = $plaidLastSynced !== '' ? ('Last synced ' . $plaidLastSynced . ' UTC') : 'Not synced yet';
+                      if ($plaidError !== '') { $plaidTitle .= ' | ' . $plaidError; }
+                    ?>
+                    <span class="badge rounded-pill <?= $plaidError !== '' ? 'text-bg-warning' : 'text-bg-light' ?>" title="<?= htmlspecialchars($plaidTitle, ENT_QUOTES, 'UTF-8') ?>">
+                      <?= htmlspecialchars($plaidName) ?>
+                      · <?= (int)($plaidItem['mapped_account_count'] ?? 0) ?>/<?= (int)($plaidItem['account_count'] ?? 0) ?> mapped
+                      · <?= (int)($plaidItem['matched_transaction_count'] ?? 0) ?>/<?= (int)($plaidItem['transaction_count'] ?? 0) ?> matched
+                      <?= $plaidStatus !== '' && $plaidStatus !== 'active' ? ' · ' . htmlspecialchars($plaidStatus) : '' ?>
+                    </span>
+                  <?php endforeach; ?>
+                </div>
+                <?php if (!empty($plaidAccounts)): ?>
 	              <div class="card mb-3 shadow-sm">
 	                <div class="card-body">
 	                  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
@@ -1019,6 +1052,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 	              </div>
 	            <?php endif; ?>
 	          <?php endif; ?>
+            </div>
+          <?php endif; ?>
           <?php
             // Precompute classes and formatted values for section header totals
             $sumClass = $totalAmount < 0 ? 'text-danger' : 'text-success';
