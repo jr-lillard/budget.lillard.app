@@ -1122,7 +1122,7 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx, bool $autoCr
     $rawJson = json_encode($tx, JSON_UNESCAPED_SLASHES);
 
     $existingStmt = $pdo->prepare(
-        'SELECT budget_transaction_id, match_method
+        'SELECT id, budget_transaction_id, match_method, removed
          FROM plaid_transactions
          WHERE plaid_item_id = ? AND plaid_transaction_id = ?
          LIMIT 1'
@@ -1133,6 +1133,37 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx, bool $autoCr
         ? (int)$existing['budget_transaction_id']
         : null;
     $existingMatchMethod = is_array($existing) ? (string)($existing['match_method'] ?? '') : '';
+    $existingRemoved = is_array($existing) ? (int)($existing['removed'] ?? 0) : 0;
+
+    if ($existingRemoved === 1 && $existingMatchMethod === 'manual_delete') {
+        $preserveDeleted = $pdo->prepare(
+            'UPDATE plaid_transactions
+             SET plaid_account_id = :plaid_account_id,
+                 pending_transaction_id = :pending_transaction_id,
+                 date = :date,
+                 authorized_date = :authorized_date,
+                 amount = :amount,
+                 name = :name,
+                 merchant_name = :merchant_name,
+                 pending = :pending,
+                 raw_json = :raw_json
+             WHERE id = :id'
+        );
+        $preserveDeleted->execute([
+            ':plaid_account_id' => $plaidAccountId,
+            ':pending_transaction_id' => trim((string)($tx['pending_transaction_id'] ?? '')) ?: null,
+            ':date' => $date,
+            ':authorized_date' => $authorizedDate,
+            ':amount' => is_numeric($tx['amount'] ?? null) ? (string)$tx['amount'] : null,
+            ':name' => trim((string)($tx['name'] ?? '')) ?: null,
+            ':merchant_name' => trim((string)($tx['merchant_name'] ?? '')) ?: null,
+            ':pending' => $pending,
+            ':raw_json' => $rawJson !== false ? $rawJson : null,
+            ':id' => (int)$existing['id'],
+        ]);
+
+        return ['stored' => false, 'matched' => false, 'created' => false, 'unmatched' => false, 'unmapped' => false, 'ignored' => true, 'match_method' => 'manual_delete'];
+    }
 
     $created = false;
     if ($existingBudgetTransactionId !== null && in_array($existingMatchMethod, ['created', 'manual_merge'], true)) {
