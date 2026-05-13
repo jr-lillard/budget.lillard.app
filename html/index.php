@@ -1312,6 +1312,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       $amtClass = (is_numeric($amt) && (float)$amt < 0) ? 'text-danger' : 'text-success';
                       $amtFmt = is_numeric($amt) ? number_format((float)$amt, 2) : htmlspecialchars((string)$amt);
                       $txId = (int)($row['id'] ?? 0);
+                      $privacyStatusCell = budget_privacy_status_cell_html($row);
                       $plaidStatusCell = budget_plaid_status_cell_html($row);
                       $isNewGroup = ($date !== $currentDate);
                       $dateCell = '';
@@ -1371,7 +1372,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                       <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
-                      <td class="<?= $recentPrivacyCellClass ?>" role="button"></td>
+                      <td class="<?= $recentPrivacyCellClass ?>" role="button"><?= $privacyStatusCell ?></td>
                       <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                       <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                       <td class="text-end">

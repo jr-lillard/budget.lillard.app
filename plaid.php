@@ -1295,6 +1295,7 @@ function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidA
     $summary = [
         'plaid_account_id' => $plaidAccountRowId,
         'matched' => 0,
+        'created' => 0,
         'unmatched' => 0,
         'unmapped' => 0,
     ];
@@ -1330,26 +1331,51 @@ function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidA
         if ($description === '') {
             $description = trim((string)($row['name'] ?? ''));
         }
+        $date = plaid_valid_date((string)($row['date'] ?? ''));
+        $authorizedDate = plaid_valid_date((string)($row['authorized_date'] ?? ''));
         $match = plaid_find_budget_match(
             $pdo,
             $owner,
             (int)$row['plaid_item_id'],
             (string)$row['plaid_transaction_id'],
             $localAccountId,
-            plaid_valid_date((string)($row['date'] ?? '')),
-            plaid_valid_date((string)($row['authorized_date'] ?? '')),
+            $date,
+            $authorizedDate,
             $budgetAmount,
             $description
         );
         $budgetTransactionId = !empty($match['budget_transaction_id']) ? (int)$match['budget_transaction_id'] : null;
         $matchMethod = (string)($match['match_method'] ?? 'no_match');
+        $created = false;
+        if ($budgetTransactionId === null
+            && $budgetAmount !== null
+            && plaid_should_auto_create_transaction(true, $date, $authorizedDate)
+            && in_array($matchMethod, ['no_match', 'ambiguous'], true)) {
+            $createdBudgetTransactionId = plaid_create_or_update_scheduled_transaction(
+                $pdo,
+                $owner,
+                $localAccountId,
+                (string)$row['plaid_transaction_id'],
+                $date,
+                $authorizedDate,
+                $budgetAmount,
+                $description
+            );
+            if ($createdBudgetTransactionId !== null) {
+                $budgetTransactionId = $createdBudgetTransactionId;
+                $matchMethod = 'created';
+                $created = true;
+            }
+        }
         $update->execute([
             ':budget_transaction_id' => $budgetTransactionId,
             ':match_method' => $matchMethod,
             ':matched_at' => $budgetTransactionId !== null ? gmdate('Y-m-d H:i:s') : null,
             ':id' => (int)$row['id'],
         ]);
-        if ($budgetTransactionId !== null) {
+        if ($created) {
+            $summary['created']++;
+        } elseif ($budgetTransactionId !== null) {
             $summary['matched']++;
         } elseif ($matchMethod === 'unmapped') {
             $summary['unmapped']++;
@@ -1447,7 +1473,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
     try {
         $summary['accounts'] = plaid_refresh_accounts($pdo, $item);
         $cursor = trim((string)($item['transactions_cursor'] ?? ''));
-        $autoCreateFromPlaid = $cursor !== '';
+        $autoCreateFromPlaid = true;
         $nextCursor = $cursor;
         $hasMore = true;
         while ($hasMore) {
@@ -1471,7 +1497,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
             }
             foreach ($modified as $tx) {
                 if (is_array($tx)) {
-                    plaid_tally_match_result($summary, plaid_upsert_transaction($pdo, $item, $tx));
+                    plaid_tally_match_result($summary, plaid_upsert_transaction($pdo, $item, $tx, $autoCreateFromPlaid));
                 }
             }
             foreach ($removed as $tx) {
