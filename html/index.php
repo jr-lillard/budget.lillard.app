@@ -1496,93 +1496,103 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   </select>
                 </div>
               </div>
-              <div class="border rounded p-3 bg-body-tertiary d-none" id="txPrivacyPanel">
-                <div class="small text-body-secondary text-uppercase fw-semibold mb-2">Privacy</div>
-                <div class="row g-2 small">
-                  <div class="col-6">
-                    <div class="text-body-secondary">Status</div>
-                    <div id="txPrivacyStatus">-</div>
+              <div class="border rounded bg-body-tertiary d-none" id="txApiTabsWrap">
+                <ul class="nav nav-tabs px-3 pt-3" id="txApiTabs" role="tablist">
+                  <li class="nav-item d-none" role="presentation" id="txPrivacyTabItem">
+                    <button class="nav-link" id="txPrivacyTab" data-bs-toggle="tab" data-bs-target="#txPrivacyPanel" type="button" role="tab" aria-controls="txPrivacyPanel" aria-selected="false">Privacy</button>
+                  </li>
+                  <li class="nav-item d-none" role="presentation" id="txPlaidTabItem">
+                    <button class="nav-link" id="txPlaidTab" data-bs-toggle="tab" data-bs-target="#txPlaidPanel" type="button" role="tab" aria-controls="txPlaidPanel" aria-selected="false">Plaid</button>
+                  </li>
+                </ul>
+                <div class="tab-content p-3">
+                  <div class="tab-pane fade d-none" id="txPrivacyPanel" role="tabpanel" aria-labelledby="txPrivacyTab" tabindex="0">
+                    <div class="row g-2 small">
+                      <div class="col-6">
+                        <div class="text-body-secondary">Status</div>
+                        <div id="txPrivacyStatus">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Latest Event</div>
+                        <div id="txPrivacyEventType">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Result</div>
+                        <div id="txPrivacyResult">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Sync</div>
+                        <div id="txPrivacySyncStatus">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Merchant</div>
+                        <div id="txPrivacyMerchant">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Token</div>
+                        <div id="txPrivacyToken" class="font-monospace text-break">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Created</div>
+                        <div id="txPrivacyCreatedAt">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Last Event At</div>
+                        <div id="txPrivacyEventAt">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Last Checked</div>
+                        <div id="txPrivacyLastCheckedAt">-</div>
+                      </div>
+                      <div class="col-12 d-none" id="txPrivacyErrorWrap">
+                        <div class="text-body-secondary">Sync Error</div>
+                        <div id="txPrivacyError" class="text-danger text-break">-</div>
+                      </div>
+                    </div>
                   </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Latest Event</div>
-                    <div id="txPrivacyEventType">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Result</div>
-                    <div id="txPrivacyResult">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Sync</div>
-                    <div id="txPrivacySyncStatus">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Merchant</div>
-                    <div id="txPrivacyMerchant">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Token</div>
-                    <div id="txPrivacyToken" class="font-monospace text-break">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Created</div>
-                    <div id="txPrivacyCreatedAt">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Last Event At</div>
-                    <div id="txPrivacyEventAt">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Last Checked</div>
-                    <div id="txPrivacyLastCheckedAt">-</div>
-                  </div>
-                  <div class="col-12 d-none" id="txPrivacyErrorWrap">
-                    <div class="text-body-secondary">Sync Error</div>
-                    <div id="txPrivacyError" class="text-danger text-break">-</div>
-                  </div>
-                </div>
-              </div>
-              <div class="border rounded p-3 bg-body-tertiary d-none mt-2" id="txPlaidPanel">
-                <div class="small text-body-secondary text-uppercase fw-semibold mb-2">Plaid</div>
-                <div class="row g-2 small">
-                  <div class="col-6">
-                    <div class="text-body-secondary">Status</div>
-                    <div id="txPlaidStatus">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Match</div>
-                    <div id="txPlaidMatchMethod">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Date</div>
-                    <div id="txPlaidDate">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Authorized</div>
-                    <div id="txPlaidAuthorizedDate">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Plaid Amount</div>
-                    <div id="txPlaidAmount">-</div>
-                  </div>
-                  <div class="col-6">
-                    <div class="text-body-secondary">Links</div>
-                    <div id="txPlaidLinkCount">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Account</div>
-                    <div id="txPlaidAccount">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Merchant</div>
-                    <div id="txPlaidMerchant">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Name</div>
-                    <div id="txPlaidName">-</div>
-                  </div>
-                  <div class="col-12">
-                    <div class="text-body-secondary">Transaction ID</div>
-                    <div id="txPlaidTransactionToken" class="font-monospace text-break">-</div>
+                  <div class="tab-pane fade d-none" id="txPlaidPanel" role="tabpanel" aria-labelledby="txPlaidTab" tabindex="0">
+                    <div class="row g-2 small">
+                      <div class="col-6">
+                        <div class="text-body-secondary">Status</div>
+                        <div id="txPlaidStatus">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Match</div>
+                        <div id="txPlaidMatchMethod">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Date</div>
+                        <div id="txPlaidDate">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Authorized</div>
+                        <div id="txPlaidAuthorizedDate">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Plaid Amount</div>
+                        <div id="txPlaidAmount">-</div>
+                      </div>
+                      <div class="col-6">
+                        <div class="text-body-secondary">Links</div>
+                        <div id="txPlaidLinkCount">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Account</div>
+                        <div id="txPlaidAccount">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Merchant</div>
+                        <div id="txPlaidMerchant">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Name</div>
+                        <div id="txPlaidName">-</div>
+                      </div>
+                      <div class="col-12">
+                        <div class="text-body-secondary">Transaction ID</div>
+                        <div id="txPlaidTransactionToken" class="font-monospace text-break">-</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1704,8 +1714,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const txAccountSuggestions = g('txAccountSuggestions');
         const txDescriptionInput = g('txDescription');
         const txDescriptionSuggestions = g('txDescriptionSuggestions');
+        const txApiTabsWrap = g('txApiTabsWrap');
+        const txPrivacyTabItem = g('txPrivacyTabItem');
+        const txPrivacyTab = g('txPrivacyTab');
         const txPrivacyPanel = g('txPrivacyPanel');
         const txPrivacyErrorWrap = g('txPrivacyErrorWrap');
+        const txPlaidTabItem = g('txPlaidTabItem');
+        const txPlaidTab = g('txPlaidTab');
         const txPlaidPanel = g('txPlaidPanel');
         const hideSuggestions = (panel, state = null) => {
           if (!panel) return;
@@ -1738,8 +1753,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             minute: '2-digit',
           });
         };
+        const apiTabConfig = {
+          privacy: { item: txPrivacyTabItem, button: txPrivacyTab, panel: txPrivacyPanel },
+          plaid: { item: txPlaidTabItem, button: txPlaidTab, panel: txPlaidPanel },
+        };
+        const setApiTabAvailable = (name, available) => {
+          const config = apiTabConfig[name];
+          if (!config) return;
+          config.item && config.item.classList.toggle('d-none', !available);
+          config.panel && config.panel.classList.toggle('d-none', !available);
+          if (!available) {
+            config.button && config.button.classList.remove('active');
+            config.button && config.button.setAttribute('aria-selected', 'false');
+            config.panel && config.panel.classList.remove('active', 'show');
+          }
+        };
+        const activateApiTab = (name) => {
+          Object.entries(apiTabConfig).forEach(([key, config]) => {
+            const isActive = key === name;
+            config.button && config.button.classList.toggle('active', isActive);
+            config.button && config.button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            config.panel && config.panel.classList.toggle('active', isActive);
+            config.panel && config.panel.classList.toggle('show', isActive);
+          });
+        };
+        const syncApiTabs = () => {
+          const available = Object.entries(apiTabConfig)
+            .filter(([, config]) => config.item && !config.item.classList.contains('d-none'))
+            .map(([name]) => name);
+          if (txApiTabsWrap) txApiTabsWrap.classList.toggle('d-none', available.length === 0);
+          if (available.length > 0) {
+            activateApiTab(available[0]);
+          }
+        };
         const resetPrivacyPanel = () => {
-          if (txPrivacyPanel) txPrivacyPanel.classList.add('d-none');
+          setApiTabAvailable('privacy', false);
           if (txPrivacyErrorWrap) txPrivacyErrorWrap.classList.add('d-none');
           setText('txPrivacyStatus', '');
           setText('txPrivacyEventType', '');
@@ -1782,7 +1830,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (txPrivacyErrorWrap) {
             txPrivacyErrorWrap.classList.toggle('d-none', (syncError || '').trim() === '');
           }
-          if (txPrivacyPanel) txPrivacyPanel.classList.remove('d-none');
+          setApiTabAvailable('privacy', true);
         };
         const plaidStatusLabel = (matchMethod, pending, linkCount) => {
           if (linkCount > 1) return 'multi';
@@ -1793,7 +1841,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           return (matchMethod || '').replace(/_/g, ' ') || 'linked';
         };
         const resetPlaidPanel = () => {
-          if (txPlaidPanel) txPlaidPanel.classList.add('d-none');
+          setApiTabAvailable('plaid', false);
           setText('txPlaidStatus', '');
           setText('txPlaidMatchMethod', '');
           setText('txPlaidDate', '');
@@ -1833,7 +1881,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setText('txPlaidMerchant', row?.dataset?.plaidMerchantName || '');
           setText('txPlaidName', row?.dataset?.plaidName || '');
           setText('txPlaidTransactionToken', row?.dataset?.plaidTransactionToken || '');
-          if (txPlaidPanel) txPlaidPanel.classList.remove('d-none');
+          setApiTabAvailable('plaid', true);
         };
         const syncSuggestionHighlight = (panel, activeIndex) => {
           if (!panel) return;
@@ -1992,6 +2040,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
           showPrivacyPanelFromRow(row);
           showPlaidPanelFromRow(row);
+          syncApiTabs();
           modal && modal.show();
         }
         // Clickable cells open edit
@@ -2030,6 +2079,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
           resetPrivacyPanel();
           resetPlaidPanel();
+          syncApiTabs();
           modal && modal.show();
         });
         const transferBtn = document.getElementById('transferBtn');
@@ -2198,6 +2248,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
           resetPrivacyPanel();
           resetPlaidPanel();
+          syncApiTabs();
           modal && modal.show();
         });
 
