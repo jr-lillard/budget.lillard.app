@@ -873,7 +873,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 	                            $plaidAmountFmt = is_numeric($plaidBudgetAmount) ? number_format((float)$plaidBudgetAmount, 2) : '';
 	                            $plaidCandidates = is_array($plaidRow['candidates'] ?? null) ? $plaidRow['candidates'] : [];
 	                          ?>
-	                          <tr>
+	                          <tr data-plaid-transaction-id="<?= (int)$plaidRow['id'] ?>">
 	                            <td>
 	                              <div class="fw-semibold"><?= htmlspecialchars($plaidDesc) ?></div>
 	                              <div class="small text-body-secondary">
@@ -900,9 +900,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 	                              </select>
 	                            </td>
 	                            <td class="text-end">
-	                              <button type="button" class="btn btn-sm btn-outline-primary plaid-merge-btn" <?= empty($plaidCandidates) ? 'disabled' : '' ?>>
-	                                Merge
-	                              </button>
+	                              <div class="btn-group btn-group-sm" role="group" aria-label="Plaid transaction actions">
+	                                <button type="button" class="btn btn-outline-primary plaid-merge-btn" <?= empty($plaidCandidates) ? 'disabled' : '' ?>>
+	                                  Merge
+	                                </button>
+	                                <button type="button"
+	                                        class="btn btn-outline-danger plaid-delete-btn"
+	                                        data-plaid-transaction-id="<?= (int)$plaidRow['id'] ?>"
+	                                        aria-label="Delete Plaid transaction"
+	                                        title="Delete Plaid transaction">
+	                                  <i class="bi bi-trash" aria-hidden="true"></i>
+	                                </button>
+	                              </div>
 	                            </td>
 	                          </tr>
 	                        <?php endforeach; ?>
@@ -1890,6 +1899,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           });
           if (!result) {
             button.disabled = false;
+            return;
+          }
+          window.location.reload();
+        });
+        document.addEventListener('click', async (event) => {
+          const button = event.target.closest('.plaid-delete-btn');
+          if (!button) return;
+          event.preventDefault();
+          const row = button.closest('tr');
+          const plaidTransactionId = button.dataset.plaidTransactionId || row?.dataset?.plaidTransactionId || '';
+          if (!plaidTransactionId) return;
+          if (!window.confirm('Delete this Plaid transaction from review?')) return;
+          button.disabled = true;
+          const result = await postForm('plaid_transaction_delete.php', {
+            plaid_transaction_id: plaidTransactionId,
+          });
+          if (!result) {
+            button.disabled = false;
+            window.alert('Unable to delete Plaid transaction.');
             return;
           }
           window.location.reload();

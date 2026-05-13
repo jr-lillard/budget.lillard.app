@@ -559,6 +559,93 @@ function plaid_merge_transaction(PDO $pdo, string $owner, int $plaidTransactionR
     ];
 }
 
+function plaid_delete_unmatched_transaction(PDO $pdo, string $owner, int $plaidTransactionRowId): array
+{
+    plaid_ensure_tables($pdo);
+    $owner = budget_canonical_user($owner);
+    if ($plaidTransactionRowId <= 0) {
+        throw new RuntimeException('Missing Plaid transaction.');
+    }
+
+    $deletedBudgetTransactionId = null;
+    $pdo->beginTransaction();
+    try {
+        $plaidStmt = $pdo->prepare(
+            'SELECT pt.id, pt.budget_transaction_id, pt.match_method,
+                    pt.plaid_transaction_id,
+                    pi.owner
+             FROM plaid_transactions pt
+             JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+             WHERE pt.id = ?
+               AND pi.owner = ?
+               AND pt.removed = 0
+             LIMIT 1
+             FOR UPDATE'
+        );
+        $plaidStmt->execute([$plaidTransactionRowId, $owner]);
+        $plaid = $plaidStmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($plaid)) {
+            throw new RuntimeException('Plaid transaction not found.');
+        }
+
+        $budgetTransactionId = (int)($plaid['budget_transaction_id'] ?? 0);
+        $matchMethod = (string)($plaid['match_method'] ?? '');
+        if ($budgetTransactionId > 0) {
+            if ($matchMethod !== 'created') {
+                throw new RuntimeException('Only unmatched Plaid transactions can be deleted here.');
+            }
+
+            $txStmt = $pdo->prepare(
+                'SELECT id, fm_pk, status
+                 FROM transactions
+                 WHERE id = ?
+                   AND owner = ?
+                 LIMIT 1
+                 FOR UPDATE'
+            );
+            $txStmt->execute([$budgetTransactionId, $owner]);
+            $budgetRow = $txStmt->fetch(PDO::FETCH_ASSOC);
+            if (is_array($budgetRow)) {
+                $fmPk = trim((string)($budgetRow['fm_pk'] ?? ''));
+                $status = $budgetRow['status'] ?? null;
+                $statusNorm = ($status === null || $status === '') ? 0 : (int)$status;
+                if (!str_starts_with($fmPk, 'plaid:') || $statusNorm !== 0) {
+                    throw new RuntimeException('Only scheduled Plaid-created transactions can be deleted here.');
+                }
+
+                $deleteBudget = $pdo->prepare('DELETE FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+                $deleteBudget->execute([$budgetTransactionId, $owner]);
+                if ($deleteBudget->rowCount() !== 1) {
+                    throw new RuntimeException('Unable to delete the Plaid-created scheduled transaction.');
+                }
+                $deletedBudgetTransactionId = $budgetTransactionId;
+            }
+        }
+
+        $update = $pdo->prepare(
+            'UPDATE plaid_transactions
+             SET removed = 1,
+                 budget_transaction_id = NULL,
+                 match_method = "manual_delete",
+                 matched_at = NULL
+             WHERE id = ?'
+        );
+        $update->execute([$plaidTransactionRowId]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    return [
+        'plaid_transaction_id' => $plaidTransactionRowId,
+        'deleted_budget_transaction_id' => $deletedBudgetTransactionId,
+    ];
+}
+
 function plaid_store_item(PDO $pdo, string $owner, string $environment, array $exchange, array $metadata = []): int
 {
     plaid_ensure_tables($pdo);
