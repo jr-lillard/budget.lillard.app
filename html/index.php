@@ -1135,6 +1135,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-privacy-last-checked-at="<?= htmlspecialchars((string)($row['privacy_last_checked_at'] ?? '')) ?>"
                           data-privacy-sync-status="<?= htmlspecialchars((string)($row['privacy_sync_status'] ?? '')) ?>"
                           data-privacy-sync-error="<?= htmlspecialchars((string)($row['privacy_sync_error'] ?? '')) ?>"
+                          data-plaid-transaction-row-id="<?= (int)($row['plaid_transaction_row_id'] ?? 0) ?>"
+                          data-plaid-transaction-token="<?= htmlspecialchars((string)($row['plaid_transaction_token'] ?? '')) ?>"
+                          data-plaid-match-method="<?= htmlspecialchars((string)($row['plaid_match_method'] ?? '')) ?>"
+                          data-plaid-pending="<?= (int)($row['plaid_pending'] ?? 0) ?>"
+                          data-plaid-date="<?= htmlspecialchars((string)($row['plaid_date'] ?? '')) ?>"
+                          data-plaid-authorized-date="<?= htmlspecialchars((string)($row['plaid_authorized_date'] ?? '')) ?>"
+                          data-plaid-amount="<?= htmlspecialchars((string)($row['plaid_amount'] ?? '')) ?>"
+                          data-plaid-name="<?= htmlspecialchars((string)($row['plaid_name'] ?? '')) ?>"
+                          data-plaid-merchant-name="<?= htmlspecialchars((string)($row['plaid_merchant_name'] ?? '')) ?>"
+                          data-plaid-link-count="<?= (int)($row['plaid_link_count'] ?? 0) ?>"
+                          data-plaid-institution="<?= htmlspecialchars((string)($row['plaid_institution_name'] ?? '')) ?>"
+                          data-plaid-account="<?= htmlspecialchars((string)($row['plaid_account_name'] ?? '')) ?>"
+                          data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -1210,6 +1223,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-privacy-last-checked-at="<?= htmlspecialchars((string)($row['privacy_last_checked_at'] ?? '')) ?>"
                           data-privacy-sync-status="<?= htmlspecialchars((string)($row['privacy_sync_status'] ?? '')) ?>"
                           data-privacy-sync-error="<?= htmlspecialchars((string)($row['privacy_sync_error'] ?? '')) ?>"
+                          data-plaid-transaction-row-id="<?= (int)($row['plaid_transaction_row_id'] ?? 0) ?>"
+                          data-plaid-transaction-token="<?= htmlspecialchars((string)($row['plaid_transaction_token'] ?? '')) ?>"
+                          data-plaid-match-method="<?= htmlspecialchars((string)($row['plaid_match_method'] ?? '')) ?>"
+                          data-plaid-pending="<?= (int)($row['plaid_pending'] ?? 0) ?>"
+                          data-plaid-date="<?= htmlspecialchars((string)($row['plaid_date'] ?? '')) ?>"
+                          data-plaid-authorized-date="<?= htmlspecialchars((string)($row['plaid_authorized_date'] ?? '')) ?>"
+                          data-plaid-amount="<?= htmlspecialchars((string)($row['plaid_amount'] ?? '')) ?>"
+                          data-plaid-name="<?= htmlspecialchars((string)($row['plaid_name'] ?? '')) ?>"
+                          data-plaid-merchant-name="<?= htmlspecialchars((string)($row['plaid_merchant_name'] ?? '')) ?>"
+                          data-plaid-link-count="<?= (int)($row['plaid_link_count'] ?? 0) ?>"
+                          data-plaid-institution="<?= htmlspecialchars((string)($row['plaid_institution_name'] ?? '')) ?>"
+                          data-plaid-account="<?= htmlspecialchars((string)($row['plaid_account_name'] ?? '')) ?>"
+                          data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                           data-status="1"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -1292,6 +1318,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-privacy-last-checked-at="<?= htmlspecialchars((string)($row['privacy_last_checked_at'] ?? '')) ?>"
                         data-privacy-sync-status="<?= htmlspecialchars((string)($row['privacy_sync_status'] ?? '')) ?>"
                         data-privacy-sync-error="<?= htmlspecialchars((string)($row['privacy_sync_error'] ?? '')) ?>"
+                        data-plaid-transaction-row-id="<?= (int)($row['plaid_transaction_row_id'] ?? 0) ?>"
+                        data-plaid-transaction-token="<?= htmlspecialchars((string)($row['plaid_transaction_token'] ?? '')) ?>"
+                        data-plaid-match-method="<?= htmlspecialchars((string)($row['plaid_match_method'] ?? '')) ?>"
+                        data-plaid-pending="<?= (int)($row['plaid_pending'] ?? 0) ?>"
+                        data-plaid-date="<?= htmlspecialchars((string)($row['plaid_date'] ?? '')) ?>"
+                        data-plaid-authorized-date="<?= htmlspecialchars((string)($row['plaid_authorized_date'] ?? '')) ?>"
+                        data-plaid-amount="<?= htmlspecialchars((string)($row['plaid_amount'] ?? '')) ?>"
+                        data-plaid-name="<?= htmlspecialchars((string)($row['plaid_name'] ?? '')) ?>"
+                        data-plaid-merchant-name="<?= htmlspecialchars((string)($row['plaid_merchant_name'] ?? '')) ?>"
+                        data-plaid-link-count="<?= (int)($row['plaid_link_count'] ?? 0) ?>"
+                        data-plaid-institution="<?= htmlspecialchars((string)($row['plaid_institution_name'] ?? '')) ?>"
+                        data-plaid-account="<?= htmlspecialchars((string)($row['plaid_account_name'] ?? '')) ?>"
+                        data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                         data-status="2"
                         data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
@@ -1412,7 +1451,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
     <?php if ($loggedIn): ?>
       <!-- Edit Transaction Modal -->
       <div class="modal fade" id="editTxModal" tabindex="-1" aria-hidden="true" aria-labelledby="editTxLabel">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-scrollable">
           <form class="modal-content" id="editTxForm">
             <div class="modal-header">
               <h5 class="modal-title" id="editTxLabel">Edit Transaction</h5>
@@ -1499,6 +1538,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                   <div class="col-12 d-none" id="txPrivacyErrorWrap">
                     <div class="text-body-secondary">Sync Error</div>
                     <div id="txPrivacyError" class="text-danger text-break">-</div>
+                  </div>
+                </div>
+              </div>
+              <div class="border rounded p-3 bg-body-tertiary d-none mt-2" id="txPlaidPanel">
+                <div class="small text-body-secondary text-uppercase fw-semibold mb-2">Plaid</div>
+                <div class="row g-2 small">
+                  <div class="col-6">
+                    <div class="text-body-secondary">Status</div>
+                    <div id="txPlaidStatus">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Match</div>
+                    <div id="txPlaidMatchMethod">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Date</div>
+                    <div id="txPlaidDate">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Authorized</div>
+                    <div id="txPlaidAuthorizedDate">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Plaid Amount</div>
+                    <div id="txPlaidAmount">-</div>
+                  </div>
+                  <div class="col-6">
+                    <div class="text-body-secondary">Links</div>
+                    <div id="txPlaidLinkCount">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Account</div>
+                    <div id="txPlaidAccount">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Merchant</div>
+                    <div id="txPlaidMerchant">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Name</div>
+                    <div id="txPlaidName">-</div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-body-secondary">Transaction ID</div>
+                    <div id="txPlaidTransactionToken" class="font-monospace text-break">-</div>
                   </div>
                 </div>
               </div>
@@ -1622,6 +1706,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const txDescriptionSuggestions = g('txDescriptionSuggestions');
         const txPrivacyPanel = g('txPrivacyPanel');
         const txPrivacyErrorWrap = g('txPrivacyErrorWrap');
+        const txPlaidPanel = g('txPlaidPanel');
         const hideSuggestions = (panel, state = null) => {
           if (!panel) return;
           panel.classList.add('d-none');
@@ -1698,6 +1783,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             txPrivacyErrorWrap.classList.toggle('d-none', (syncError || '').trim() === '');
           }
           if (txPrivacyPanel) txPrivacyPanel.classList.remove('d-none');
+        };
+        const plaidStatusLabel = (matchMethod, pending, linkCount) => {
+          if (linkCount > 1) return 'multi';
+          if (pending === '1') return 'pending';
+          if (matchMethod === 'created') return 'created';
+          if (matchMethod === 'manual_merge') return 'merged';
+          if ((matchMethod || '').startsWith('amount_')) return 'matched';
+          return (matchMethod || '').replace(/_/g, ' ') || 'linked';
+        };
+        const resetPlaidPanel = () => {
+          if (txPlaidPanel) txPlaidPanel.classList.add('d-none');
+          setText('txPlaidStatus', '');
+          setText('txPlaidMatchMethod', '');
+          setText('txPlaidDate', '');
+          setText('txPlaidAuthorizedDate', '');
+          setText('txPlaidAmount', '');
+          setText('txPlaidLinkCount', '');
+          setText('txPlaidAccount', '');
+          setText('txPlaidMerchant', '');
+          setText('txPlaidName', '');
+          setText('txPlaidTransactionToken', '');
+        };
+        const showPlaidPanelFromRow = (row) => {
+          const rowId = row?.dataset?.plaidTransactionRowId || '';
+          resetPlaidPanel();
+          if (!rowId || rowId === '0') return;
+
+          const matchMethod = row?.dataset?.plaidMatchMethod || '';
+          const pending = row?.dataset?.plaidPending || '0';
+          const linkCountRaw = row?.dataset?.plaidLinkCount || '1';
+          const linkCount = Math.max(1, Number.parseInt(linkCountRaw, 10) || 1);
+          const institution = row?.dataset?.plaidInstitution || '';
+          const account = row?.dataset?.plaidAccount || '';
+          const mask = row?.dataset?.plaidMask || '';
+          const accountParts = [];
+          if (institution) accountParts.push(institution);
+          if (account) accountParts.push(account);
+          let accountLabel = accountParts.join(' | ');
+          if (mask) accountLabel = `${accountLabel}${accountLabel ? ' ' : ''}...${mask}`;
+
+          setText('txPlaidStatus', plaidStatusLabel(matchMethod, pending, linkCount));
+          setText('txPlaidMatchMethod', matchMethod);
+          setText('txPlaidDate', row?.dataset?.plaidDate || '');
+          setText('txPlaidAuthorizedDate', row?.dataset?.plaidAuthorizedDate || '');
+          setText('txPlaidAmount', row?.dataset?.plaidAmount || '');
+          setText('txPlaidLinkCount', String(linkCount));
+          setText('txPlaidAccount', accountLabel);
+          setText('txPlaidMerchant', row?.dataset?.plaidMerchantName || '');
+          setText('txPlaidName', row?.dataset?.plaidName || '');
+          setText('txPlaidTransactionToken', row?.dataset?.plaidTransactionToken || '');
+          if (txPlaidPanel) txPlaidPanel.classList.remove('d-none');
         };
         const syncSuggestionHighlight = (panel, activeIndex) => {
           if (!panel) return;
@@ -1855,6 +1991,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           const statusVal = row.dataset.status ?? '1';
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
           showPrivacyPanelFromRow(row);
+          showPlaidPanelFromRow(row);
           modal && modal.show();
         }
         // Clickable cells open edit
@@ -1892,6 +2029,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txCheck','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
           resetPrivacyPanel();
+          resetPlaidPanel();
           modal && modal.show();
         });
         const transferBtn = document.getElementById('transferBtn');
@@ -2059,6 +2197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txCheck','');
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = status;
           resetPrivacyPanel();
+          resetPlaidPanel();
           modal && modal.show();
         });
 
