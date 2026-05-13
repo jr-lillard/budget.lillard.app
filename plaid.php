@@ -860,6 +860,20 @@ function plaid_valid_date(?string $date): ?string
     return $date;
 }
 
+function plaid_auto_create_cutoff_date(): string
+{
+    return plaid_valid_date(getenv('BUDGET_PLAID_AUTO_CREATE_AFTER') ?: '') ?? '2026-05-01';
+}
+
+function plaid_should_auto_create_transaction(bool $autoCreate, ?string $date, ?string $authorizedDate): bool
+{
+    if (!$autoCreate) {
+        return false;
+    }
+    $transactionDate = plaid_valid_date($date) ?? plaid_valid_date($authorizedDate);
+    return $transactionDate !== null && $transactionDate >= plaid_auto_create_cutoff_date();
+}
+
 function plaid_text_key(string $value): string
 {
     $value = strtolower(trim($value));
@@ -1199,7 +1213,7 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx, bool $autoCr
         $matchMethod = (string)($match['match_method'] ?? 'no_match');
 
         if ($budgetTransactionId === null
-            && $autoCreate
+            && plaid_should_auto_create_transaction($autoCreate, $date, $authorizedDate)
             && $localAccountId !== null
             && in_array($matchMethod, ['no_match', 'ambiguous'], true)) {
             $createdBudgetTransactionId = plaid_create_or_update_scheduled_transaction(
