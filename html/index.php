@@ -1581,7 +1581,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     </select>
                   </div>
                   <div class="col-4">
-                    <label class="form-label" for="txClientPaymentAmount">Amount</label>
+                    <label class="form-label" for="txClientPaymentAmount">Payment Amount</label>
                     <input type="text" class="form-control" name="client_payment_amount" id="txClientPaymentAmount" placeholder="0.00">
                   </div>
                 </div>
