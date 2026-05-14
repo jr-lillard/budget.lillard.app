@@ -1046,6 +1046,120 @@ function plaid_reconcile_recent_transfer_pairs(PDO $pdo, string $owner, int $day
     return $changed;
 }
 
+function plaid_reprocess_unlinked_transactions(PDO $pdo, string $owner, ?int $plaidItemId = null, int $days = 30): array
+{
+    $owner = budget_canonical_user($owner);
+    $days = max(1, min(90, $days));
+    $relativeStart = gmdate('Y-m-d', strtotime('-' . $days . ' days') ?: time());
+    $cutoff = max($relativeStart, plaid_auto_create_cutoff_date());
+    $summary = [
+        'matched' => 0,
+        'created' => 0,
+        'unmatched' => 0,
+        'unmapped' => 0,
+    ];
+
+    $sql = 'SELECT pt.id, pt.plaid_item_id, pt.plaid_account_id, pt.plaid_transaction_id,
+                   pt.date, pt.authorized_date, pt.amount, pt.name, pt.merchant_name,
+                   pa.local_account_id
+            FROM plaid_transactions pt
+            JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+            JOIN plaid_accounts pa
+              ON pa.plaid_item_id = pt.plaid_item_id
+             AND pa.plaid_account_id = pt.plaid_account_id
+            WHERE pi.owner = :owner
+              AND pt.removed = 0
+              AND pt.budget_transaction_id IS NULL
+              AND COALESCE(pt.date, pt.authorized_date) >= :cutoff';
+    $params = [
+        ':owner' => $owner,
+        ':cutoff' => $cutoff,
+    ];
+    if ($plaidItemId !== null && $plaidItemId > 0) {
+        $sql .= ' AND pt.plaid_item_id = :plaid_item_id';
+        $params[':plaid_item_id'] = $plaidItemId;
+    }
+    $sql .= ' ORDER BY COALESCE(pt.date, pt.authorized_date) DESC, pt.id DESC LIMIT 500';
+
+    $rows = $pdo->prepare($sql);
+    $rows->execute($params);
+    $update = $pdo->prepare(
+        'UPDATE plaid_transactions
+         SET budget_transaction_id = :budget_transaction_id,
+             match_method = :match_method,
+             matched_at = :matched_at
+         WHERE id = :id'
+    );
+
+    foreach ($rows->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $localAccountId = (int)($row['local_account_id'] ?? 0);
+        $budgetAmount = plaid_budget_amount_from_plaid_amount($row['amount'] ?? null);
+        $description = trim((string)($row['merchant_name'] ?? ''));
+        if ($description === '') {
+            $description = trim((string)($row['name'] ?? ''));
+        }
+        $date = plaid_valid_date((string)($row['date'] ?? ''));
+        $authorizedDate = plaid_valid_date((string)($row['authorized_date'] ?? ''));
+        $match = plaid_find_budget_match(
+            $pdo,
+            $owner,
+            (int)$row['plaid_item_id'],
+            (string)$row['plaid_transaction_id'],
+            $localAccountId > 0 ? $localAccountId : null,
+            $date,
+            $authorizedDate,
+            $budgetAmount,
+            $description
+        );
+        $budgetTransactionId = !empty($match['budget_transaction_id']) ? (int)$match['budget_transaction_id'] : null;
+        $matchMethod = (string)($match['match_method'] ?? 'no_match');
+        $created = false;
+        if ($budgetTransactionId === null
+            && $budgetAmount !== null
+            && $localAccountId > 0
+            && plaid_should_auto_create_transaction(true, $date, $authorizedDate)
+            && in_array($matchMethod, ['no_match', 'ambiguous'], true)) {
+            $createdBudgetTransactionId = plaid_create_or_update_scheduled_transaction(
+                $pdo,
+                $owner,
+                $localAccountId,
+                (string)$row['plaid_transaction_id'],
+                $date,
+                $authorizedDate,
+                $budgetAmount,
+                $description
+            );
+            if ($createdBudgetTransactionId !== null) {
+                $budgetTransactionId = $createdBudgetTransactionId;
+                $matchMethod = 'created';
+                $created = true;
+            }
+        }
+
+        $update->execute([
+            ':budget_transaction_id' => $budgetTransactionId,
+            ':match_method' => $matchMethod,
+            ':matched_at' => $budgetTransactionId !== null ? gmdate('Y-m-d H:i:s') : null,
+            ':id' => (int)$row['id'],
+        ]);
+
+        if ($budgetTransactionId !== null) {
+            plaid_reconcile_transfer_pair_for_transaction($pdo, $owner, (int)$row['id']);
+        }
+        if ($created) {
+            $summary['created']++;
+        } elseif ($budgetTransactionId !== null) {
+            $summary['matched']++;
+        } elseif ($matchMethod === 'unmapped') {
+            $summary['unmapped']++;
+        } else {
+            $summary['unmatched']++;
+        }
+    }
+
+    return $summary;
+}
+
 function plaid_valid_date(?string $date): ?string
 {
     $date = trim((string)$date);
@@ -1684,6 +1798,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
         'unmatched' => 0,
         'unmapped' => 0,
         'removed' => 0,
+        'reprocessed' => 0,
         'transfers' => 0,
         'pages' => 0,
     ];
@@ -1733,6 +1848,12 @@ function plaid_sync_item(PDO $pdo, array $item): array
             }
         }
 
+        $reprocessed = plaid_reprocess_unlinked_transactions($pdo, (string)$item['owner'], $itemId);
+        $summary['matched'] += (int)$reprocessed['matched'];
+        $summary['created'] += (int)$reprocessed['created'];
+        $summary['unmatched'] += (int)$reprocessed['unmatched'];
+        $summary['unmapped'] += (int)$reprocessed['unmapped'];
+        $summary['reprocessed'] = array_sum($reprocessed);
         $summary['transfers'] = plaid_reconcile_recent_transfer_pairs($pdo, (string)$item['owner']);
 
         $stmt = $pdo->prepare(
