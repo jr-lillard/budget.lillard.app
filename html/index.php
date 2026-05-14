@@ -37,6 +37,8 @@ $recentTotalPages = 1;
 $recentOffset = 0;
 $accPairs = [];
 $allAccountPairs = [];
+$clientAccountPairs = [];
+$accountClientByName = [];
 $accounts = [];
 $descriptions = [];
 $accountActivity = [];
@@ -568,7 +570,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             $recentOffset = ($recentPage - 1) * $recentLimit;
 
             $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
-                       t.account_id, t.fm_pk, a.name AS account_name,
+                       t.account_id, t.fm_pk, a.name AS account_name, IFNULL(a.is_client, 0) AS account_is_client,
+                       cpt.id AS client_payment_transaction_id,
+                       cpt.account_id AS client_payment_account_id,
+                       cpt.amount AS client_payment_amount,
                        pts.transaction_token AS privacy_token,
                        pts.latest_transaction_status AS privacy_status,
                        pts.latest_event_type AS privacy_event_type,
@@ -594,6 +599,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                        pa.mask AS plaid_account_mask
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id
+                    LEFT JOIN transactions cpt
+                      ON cpt.owner = t.owner
+                     AND cpt.fm_pk = CONCAT("client-payment:", t.id)
                     LEFT JOIN privacy_transaction_sync pts ON pts.transaction_token = t.fm_pk
                     LEFT JOIN (
                         SELECT budget_transaction_id, MIN(id) AS plaid_transaction_row_id, COUNT(*) AS plaid_link_count
@@ -690,8 +698,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
               $name = $nm->fetchColumn();
               if ($name !== false) { $accPairs[$filterAccountId] = (string)$name; }
             }
-            $allAccStmt = $pdo->query('SELECT id, name FROM accounts WHERE name IS NOT NULL AND name <> "" ORDER BY name ASC');
-            $allAccountPairs = $allAccStmt ? ($allAccStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: []) : [];
+            $allAccStmt = $pdo->query('SELECT id, name, IFNULL(is_client, 0) AS is_client FROM accounts WHERE name IS NOT NULL AND name <> "" ORDER BY name ASC');
+            $allAccountRows = $allAccStmt ? ($allAccStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+            foreach ($allAccountRows as $accountRow) {
+                $accountId = (int)($accountRow['id'] ?? 0);
+                $accountName = (string)($accountRow['name'] ?? '');
+                if ($accountId <= 0 || $accountName === '') {
+                    continue;
+                }
+                $allAccountPairs[$accountId] = $accountName;
+                $isClientAccount = (int)($accountRow['is_client'] ?? 0) === 1;
+                $accountClientByName[$accountName] = $isClientAccount;
+                if ($isClientAccount) {
+                    $clientAccountPairs[$accountId] = $accountName;
+                }
+            }
             // Keep names array for modal account select
             $accounts = array_values(!empty($allAccountPairs) ? $allAccountPairs : $accPairs);
 
@@ -1184,7 +1205,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-plaid-account="<?= htmlspecialchars((string)($row['plaid_account_name'] ?? '')) ?>"
                           data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                           data-status="0"
-                          data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
+                          data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
+                          data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>"
+                          data-client-payment-id="<?= (int)($row['client_payment_transaction_id'] ?? 0) ?>"
+                          data-client-payment-account-id="<?= (int)($row['client_payment_account_id'] ?? 0) ?>"
+                          data-client-payment-amount="<?= htmlspecialchars((string)($row['client_payment_amount'] ?? '')) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
@@ -1272,7 +1297,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-plaid-account="<?= htmlspecialchars((string)($row['plaid_account_name'] ?? '')) ?>"
                           data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                           data-status="1"
-                          data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
+                          data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
+                          data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>"
+                          data-client-payment-id="<?= (int)($row['client_payment_transaction_id'] ?? 0) ?>"
+                          data-client-payment-account-id="<?= (int)($row['client_payment_account_id'] ?? 0) ?>"
+                          data-client-payment-amount="<?= htmlspecialchars((string)($row['client_payment_amount'] ?? '')) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
@@ -1368,7 +1397,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-plaid-account="<?= htmlspecialchars((string)($row['plaid_account_name'] ?? '')) ?>"
                         data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                         data-status="2"
-                        data-account-id="<?= (int)($row['account_id'] ?? 0) ?>">
+                        data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
+                        data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>"
+                        data-client-payment-id="<?= (int)($row['client_payment_transaction_id'] ?? 0) ?>"
+                        data-client-payment-account-id="<?= (int)($row['client_payment_account_id'] ?? 0) ?>"
+                        data-client-payment-amount="<?= htmlspecialchars((string)($row['client_payment_amount'] ?? '')) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                       <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
@@ -1530,6 +1563,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                     <option value="1" selected>Pending</option>
                     <option value="2">Posted</option>
                   </select>
+                </div>
+              </div>
+              <div class="border rounded p-2 mb-2 d-none" id="txClientPaymentWrap">
+                <div class="form-check form-switch mb-2">
+                  <input class="form-check-input" type="checkbox" role="switch" id="txRecordClientPayment" name="record_client_payment" value="1" <?= empty($clientAccountPairs) ? 'disabled' : '' ?>>
+                  <label class="form-check-label" for="txRecordClientPayment">Record as client payment</label>
+                </div>
+                <div class="row g-2">
+                  <div class="col-8">
+                    <label class="form-label" for="txClientPaymentAccount">Client</label>
+                    <select class="form-select" name="client_payment_account_id" id="txClientPaymentAccount">
+                      <option value="">Select client...</option>
+                      <?php foreach ($clientAccountPairs as $clientAccountId => $clientAccountName): ?>
+                        <option value="<?= (int)$clientAccountId ?>"><?= htmlspecialchars((string)$clientAccountName) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div class="col-4">
+                    <label class="form-label" for="txClientPaymentAmount">Amount</label>
+                    <input type="text" class="form-control" name="client_payment_amount" id="txClientPaymentAmount" placeholder="0.00">
+                  </div>
                 </div>
               </div>
               <div class="border rounded bg-body-tertiary d-none" id="txApiTabsWrap">
@@ -1735,6 +1789,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const connectPlaidBtn = document.getElementById('connectPlaidBtn');
         const syncPlaidBtn = document.getElementById('syncPlaidBtn');
         const accountOptions = <?= json_encode(array_values(array_unique(array_map('strval', $accounts ?? []))), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+        const accountClientByName = <?= json_encode($accountClientByName ?? [], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         const descriptionOptions = <?= json_encode(array_values(array_unique(array_map('strval', $descriptions ?? []))), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
         const todayIso = () => {
           const now = new Date();
@@ -1744,12 +1799,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           return `${yyyy}-${mm}-${dd}`;
         };
         const normalizeText = (value) => (value || '').trim().toLowerCase();
+        const parseCurrencyValue = (value) => {
+          const parsed = Number.parseFloat((value || '').toString().replace(/,/g, '').trim());
+          return Number.isFinite(parsed) ? parsed : 0;
+        };
         const txAccountInput = g('txAccountInput');
         const txAccountSelect = g('txAccountSelect');
         const txAccountNew = g('txAccountNew');
         const txAccountSuggestions = g('txAccountSuggestions');
         const txDescriptionInput = g('txDescription');
         const txDescriptionSuggestions = g('txDescriptionSuggestions');
+        const txClientPaymentWrap = g('txClientPaymentWrap');
+        const txRecordClientPayment = g('txRecordClientPayment');
+        const txClientPaymentAccount = g('txClientPaymentAccount');
+        const txClientPaymentAmount = g('txClientPaymentAmount');
         const txApiTabsWrap = g('txApiTabsWrap');
         const txPrivacyTabItem = g('txPrivacyTabItem');
         const txPrivacyTab = g('txPrivacyTab');
@@ -2029,6 +2092,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (typed === '') {
             txAccountSelect.value = '';
             txAccountNew.value = '';
+            syncClientPaymentControls();
             return;
           }
           const exactMatch = accountOptions.find((option) => normalizeText(option) === normalizeText(typed));
@@ -2040,7 +2104,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             txAccountSelect.value = '__new__';
             txAccountNew.value = typed;
           }
+          syncClientPaymentControls();
         };
+        const clientPaymentDefaultAmount = () => {
+          const amount = Math.abs(parseCurrencyValue(g('txAmount')?.value || ''));
+          return amount > 0 ? amount.toFixed(2) : '';
+        };
+        const currentModalAccountIsClient = () => {
+          const typed = (txAccountInput?.value || '').trim();
+          const exactMatch = accountOptions.find((option) => normalizeText(option) === normalizeText(typed));
+          return exactMatch ? accountClientByName[exactMatch] === true : false;
+        };
+        function syncClientPaymentControls(){
+          if (!txClientPaymentWrap || !txRecordClientPayment) return;
+          const hasClientAccounts = !!txClientPaymentAccount && txClientPaymentAccount.options.length > 1;
+          const sourceAmount = parseCurrencyValue(g('txAmount')?.value || '');
+          const visible = hasClientAccounts && sourceAmount > 0 && !currentModalAccountIsClient();
+          txClientPaymentWrap.classList.toggle('d-none', !visible);
+          txRecordClientPayment.disabled = !visible;
+          if (!visible) {
+            txRecordClientPayment.checked = false;
+          }
+          const controlsEnabled = visible && txRecordClientPayment.checked;
+          if (txClientPaymentAccount) txClientPaymentAccount.disabled = !controlsEnabled;
+          if (txClientPaymentAmount) {
+            txClientPaymentAmount.disabled = !controlsEnabled;
+            if (visible && txClientPaymentAmount.value.trim() === '') {
+              txClientPaymentAmount.value = clientPaymentDefaultAmount();
+            }
+          }
+        }
+        function resetClientPaymentControls(){
+          if (txRecordClientPayment) txRecordClientPayment.checked = false;
+          if (txClientPaymentAccount) txClientPaymentAccount.value = '';
+          if (txClientPaymentAmount) txClientPaymentAmount.value = clientPaymentDefaultAmount();
+          syncClientPaymentControls();
+        }
+        function prefillClientPaymentFromRow(row){
+          const linkedAccountId = row?.dataset?.clientPaymentAccountId || '';
+          const linkedAmount = row?.dataset?.clientPaymentAmount || '';
+          if (txRecordClientPayment) txRecordClientPayment.checked = linkedAccountId !== '' && linkedAccountId !== '0';
+          if (txClientPaymentAccount) txClientPaymentAccount.value = linkedAccountId !== '0' ? linkedAccountId : '';
+          if (txClientPaymentAmount) txClientPaymentAmount.value = linkedAmount || clientPaymentDefaultAmount();
+          syncClientPaymentControls();
+        }
         // Use custom suggestion lists instead of native select/datalist to avoid iPad text-entry issues.
         attachSuggestionInput({
           input: txAccountInput,
@@ -2049,6 +2156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           onPick: (value) => {
             if (txAccountInput) txAccountInput.value = value;
             syncAccountFields();
+            syncClientPaymentControls();
           },
         });
         attachSuggestionInput({
@@ -2059,7 +2167,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
             if (txDescriptionInput) txDescriptionInput.value = value;
           },
         });
-        txAccountInput && txAccountInput.addEventListener('input', syncAccountFields);
+        txAccountInput && txAccountInput.addEventListener('input', () => {
+          syncAccountFields();
+          syncClientPaymentControls();
+        });
+        g('txAmount')?.addEventListener('input', () => {
+          if (txClientPaymentAmount && !txRecordClientPayment?.checked) {
+            txClientPaymentAmount.value = clientPaymentDefaultAmount();
+          }
+          syncClientPaymentControls();
+        });
+        txRecordClientPayment?.addEventListener('change', () => {
+          if (txRecordClientPayment.checked && txClientPaymentAmount && txClientPaymentAmount.value.trim() === '') {
+            txClientPaymentAmount.value = clientPaymentDefaultAmount();
+          }
+          syncClientPaymentControls();
+        });
         function openEditFromRow(row){
           if (!row) return;
           setv('txId', row.dataset.id || '');
@@ -2074,6 +2197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txCheck', row.dataset.check || '');
           const statusVal = row.dataset.status ?? '1';
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
+          prefillClientPaymentFromRow(row);
           showPrivacyPanelFromRow(row);
           showPlaidPanelFromRow(row);
           syncApiTabs();
@@ -2113,6 +2237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txDescription','');
           setv('txCheck','');
           const statusEl2 = g('txStatus'); if (statusEl2) statusEl2.value = '1';
+          resetClientPaymentControls();
           resetPrivacyPanel();
           resetPlaidPanel();
           syncApiTabs();

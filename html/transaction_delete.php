@@ -27,15 +27,22 @@ try {
     if ($id <= 0) {
         throw new RuntimeException('Invalid id');
     }
+    $pdo->beginTransaction();
+    budget_delete_linked_client_payment($pdo, $owner, $id);
     $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id AND owner = :owner');
     $stmt->execute([':id' => $id, ':owner' => $owner]);
     if ($stmt->rowCount() < 1) {
+        $pdo->rollBack();
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Not found']);
         exit;
     }
+    $pdo->commit();
     echo json_encode(['ok' => true, 'id' => $id]);
 } catch (Throwable $e) {
+    if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }

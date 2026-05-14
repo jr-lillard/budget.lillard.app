@@ -47,6 +47,9 @@ try {
     $accountSelect = trim((string)($_POST['account_select'] ?? ''));
     $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
     $accountKeep = (int)($_POST['account_keep'] ?? 0);
+    $recordClientPayment = ($_POST['record_client_payment'] ?? '') === '1';
+    $clientPaymentAccountId = (int)($_POST['client_payment_account_id'] ?? 0);
+    $clientPaymentAmount = trim((string)($_POST['client_payment_amount'] ?? ''));
 
     $normalizeStatus = static function ($rawStatus, int $postedFallback): int {
         $statusVal = null;
@@ -159,16 +162,24 @@ try {
         $sel->execute([$accountSelect]);
         $accountId = (int)$sel->fetchColumn();
     }
+    if ($recordClientPayment && $accountId !== null && budget_is_client_account($pdo, (int)$accountId)) {
+        throw new RuntimeException('Client payment source must be a deposit account, not a client account.');
+    }
 
     // Normalize status value: 0=scheduled, 1=pending, 2=posted
     $statusVal = $normalizeStatus($rawStatus, $postedInt);
     // Keep legacy posted column in sync with 3-state status
     $postedInt = ($statusVal === 2) ? 1 : 0;
+    $sourceAmount = $amount !== '' && is_numeric($amount) ? (float)$amount : 0.0;
+    if ($recordClientPayment && $sourceAmount <= 0.0) {
+        throw new RuntimeException('Client payments can only be recorded for deposits.');
+    }
 
     if ($isInsert) {
         $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
                 VALUES (:account_id, :date, :amount, :description, :check_no, :posted, :status, :owner, NOW(), NOW())';
         $stmt = $pdo->prepare($sql);
+        $pdo->beginTransaction();
         $stmt->execute([
             ':account_id' => $accountId ?: null,
             ':date' => $date !== '' ? $date : null,
@@ -180,11 +191,25 @@ try {
             ':owner' => $owner,
         ]);
         $newId = (int)$pdo->lastInsertId();
-        echo json_encode(['ok' => true, 'id' => $newId]);
+        $clientPaymentId = null;
+        if ($recordClientPayment) {
+            $clientPaymentId = budget_upsert_linked_client_payment(
+                $pdo,
+                $owner,
+                $newId,
+                $clientPaymentAccountId,
+                $date !== '' ? $date : null,
+                $clientPaymentAmount !== '' ? $clientPaymentAmount : $amount,
+                $statusVal
+            );
+        }
+        $pdo->commit();
+        echo json_encode(['ok' => true, 'id' => $newId, 'client_payment_id' => $clientPaymentId]);
     } else {
         $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status, updated_at_source = NOW()
                 WHERE id = :id AND owner = :owner';
         $stmt = $pdo->prepare($sql);
+        $pdo->beginTransaction();
         $stmt->execute([
             ':account_id' => $accountId ?: null,
             ':date' => $date !== '' ? $date : null,
@@ -197,16 +222,36 @@ try {
             ':owner' => $owner,
         ]);
         if ($stmt->rowCount() === 0) {
-            http_response_code(404);
-            echo json_encode(['ok' => false, 'error' => 'Not found']);
-            return;
+            $existsStmt = $pdo->prepare('SELECT COUNT(*) FROM transactions WHERE id = ? AND owner = ?');
+            $existsStmt->execute([$id, $owner]);
+            if ((int)$existsStmt->fetchColumn() < 1) {
+                $pdo->rollBack();
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Not found']);
+                return;
+            }
         }
+        $clientPaymentId = null;
+        if ($recordClientPayment) {
+            $clientPaymentId = budget_upsert_linked_client_payment(
+                $pdo,
+                $owner,
+                $id,
+                $clientPaymentAccountId,
+                $date !== '' ? $date : null,
+                $clientPaymentAmount !== '' ? $clientPaymentAmount : $amount,
+                $statusVal
+            );
+        } else {
+            budget_delete_linked_client_payment($pdo, $owner, $id);
+        }
+        $pdo->commit();
         try {
             budget_learn_privacy_description_rule_from_transaction($pdo, $owner, $id, $description);
         } catch (Throwable $e) {
             // Don't block manual transaction edits if rule learning fails.
         }
-        echo json_encode(['ok' => true, 'id' => $id]);
+        echo json_encode(['ok' => true, 'id' => $id, 'client_payment_id' => $clientPaymentId]);
     }
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

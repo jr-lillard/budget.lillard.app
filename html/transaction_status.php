@@ -79,6 +79,18 @@ try {
         echo json_encode(['ok' => false, 'error' => 'Not found']);
         exit;
     }
+    $syncStmt = $pdo->prepare('SELECT `date`, status FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+    $syncStmt->execute([$id, $owner]);
+    $syncRow = $syncStmt->fetch(PDO::FETCH_ASSOC);
+    if (is_array($syncRow)) {
+        budget_sync_linked_client_payment_status(
+            $pdo,
+            $owner,
+            $id,
+            $syncRow['date'] !== null ? (string)$syncRow['date'] : null,
+            (int)($syncRow['status'] ?? $status)
+        );
+    }
     echo json_encode(['ok' => true, 'id' => $id, 'status' => $status]);
 } catch (Throwable $e) {
     http_response_code(400);
