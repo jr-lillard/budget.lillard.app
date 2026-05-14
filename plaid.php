@@ -659,7 +659,9 @@ function plaid_mark_budget_transaction_deleted(PDO $pdo, string $owner, int $bud
     if ($budgetTransactionId <= 0) {
         return 0;
     }
-    plaid_ensure_tables($pdo);
+    if (!$pdo->inTransaction()) {
+        plaid_ensure_tables($pdo);
+    }
     $owner = budget_canonical_user($owner);
     $stmt = $pdo->prepare(
         'UPDATE plaid_transactions pt
@@ -681,7 +683,9 @@ function plaid_merge_budget_transactions(PDO $pdo, string $owner, int $keepTrans
     if ($keepTransactionId <= 0 || $dropTransactionId <= 0 || $keepTransactionId === $dropTransactionId) {
         throw new RuntimeException('Select two different transactions to merge.');
     }
-    plaid_ensure_tables($pdo);
+    if (!$pdo->inTransaction()) {
+        plaid_ensure_tables($pdo);
+    }
     $owner = budget_canonical_user($owner);
     $startedTransaction = !$pdo->inTransaction();
     if ($startedTransaction) {

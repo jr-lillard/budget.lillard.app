@@ -29,6 +29,7 @@ try {
         throw new RuntimeException('Invalid id');
     }
 
+    plaid_ensure_tables($pdo);
     $pdo->beginTransaction();
     $txStmt = $pdo->prepare('SELECT id FROM transactions WHERE id = :id AND owner = :owner LIMIT 1 FOR UPDATE');
     $txStmt->execute([':id' => $id, ':owner' => $owner]);
