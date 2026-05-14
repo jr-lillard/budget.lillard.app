@@ -174,6 +174,17 @@ try {
     if ($recordClientPayment && $sourceAmount <= 0.0) {
         throw new RuntimeException('Client payments can only be recorded for deposits.');
     }
+    $clientPaymentClientName = null;
+    if ($recordClientPayment) {
+        $clientStmt = $pdo->prepare('SELECT name FROM accounts WHERE id = ? AND IFNULL(is_client, 0) = 1 LIMIT 1');
+        $clientStmt->execute([$clientPaymentAccountId]);
+        $clientName = trim((string)($clientStmt->fetchColumn() ?: ''));
+        if ($clientName === '') {
+            throw new RuntimeException('Select a client account for the payment.');
+        }
+        $clientPaymentClientName = $clientName;
+        $description = $clientPaymentClientName;
+    }
 
     if ($isInsert) {
         $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
