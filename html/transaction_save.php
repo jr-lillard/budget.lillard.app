@@ -47,9 +47,6 @@ try {
     $accountSelect = trim((string)($_POST['account_select'] ?? ''));
     $accountNew = trim((string)($_POST['account_name_new'] ?? ''));
     $accountKeep = (int)($_POST['account_keep'] ?? 0);
-    $recordClientPayment = ($_POST['record_client_payment'] ?? '') === '1';
-    $clientPaymentAccountId = (int)($_POST['client_payment_account_id'] ?? 0);
-    $clientPaymentAmount = trim((string)($_POST['client_payment_amount'] ?? ''));
 
     $normalizeStatus = static function ($rawStatus, int $postedFallback): int {
         $statusVal = null;
@@ -162,29 +159,11 @@ try {
         $sel->execute([$accountSelect]);
         $accountId = (int)$sel->fetchColumn();
     }
-    if ($recordClientPayment && $accountId !== null && budget_is_client_account($pdo, (int)$accountId)) {
-        throw new RuntimeException('Client payment source must be a deposit account, not a client account.');
-    }
 
     // Normalize status value: 0=scheduled, 1=pending, 2=posted
     $statusVal = $normalizeStatus($rawStatus, $postedInt);
     // Keep legacy posted column in sync with 3-state status
     $postedInt = ($statusVal === 2) ? 1 : 0;
-    $sourceAmount = $amount !== '' && is_numeric($amount) ? (float)$amount : 0.0;
-    if ($recordClientPayment && $sourceAmount <= 0.0) {
-        throw new RuntimeException('Client payments can only be recorded for deposits.');
-    }
-    $clientPaymentClientName = null;
-    if ($recordClientPayment) {
-        $clientStmt = $pdo->prepare('SELECT name FROM accounts WHERE id = ? AND IFNULL(is_client, 0) = 1 LIMIT 1');
-        $clientStmt->execute([$clientPaymentAccountId]);
-        $clientName = trim((string)($clientStmt->fetchColumn() ?: ''));
-        if ($clientName === '') {
-            throw new RuntimeException('Select a client account for the payment.');
-        }
-        $clientPaymentClientName = $clientName;
-        $description = $clientPaymentClientName;
-    }
 
     if ($isInsert) {
         $sql = 'INSERT INTO transactions (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
@@ -202,19 +181,8 @@ try {
             ':owner' => $owner,
         ]);
         $newId = (int)$pdo->lastInsertId();
-        $clientPaymentId = null;
-        if ($recordClientPayment) {
-            $clientPaymentId = budget_create_client_payment(
-                $pdo,
-                $owner,
-                $clientPaymentAccountId,
-                $date !== '' ? $date : null,
-                $clientPaymentAmount !== '' ? $clientPaymentAmount : $amount,
-                $statusVal
-            );
-        }
         $pdo->commit();
-        echo json_encode(['ok' => true, 'id' => $newId, 'client_payment_id' => $clientPaymentId]);
+        echo json_encode(['ok' => true, 'id' => $newId]);
     } else {
         $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status, updated_at_source = NOW()
                 WHERE id = :id AND owner = :owner';
@@ -241,24 +209,13 @@ try {
                 return;
             }
         }
-        $clientPaymentId = null;
-        if ($recordClientPayment) {
-            $clientPaymentId = budget_create_client_payment(
-                $pdo,
-                $owner,
-                $clientPaymentAccountId,
-                $date !== '' ? $date : null,
-                $clientPaymentAmount !== '' ? $clientPaymentAmount : $amount,
-                $statusVal
-            );
-        }
         $pdo->commit();
         try {
             budget_learn_privacy_description_rule_from_transaction($pdo, $owner, $id, $description);
         } catch (Throwable $e) {
             // Don't block manual transaction edits if rule learning fails.
         }
-        echo json_encode(['ok' => true, 'id' => $id, 'client_payment_id' => $clientPaymentId]);
+        echo json_encode(['ok' => true, 'id' => $id]);
     }
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
