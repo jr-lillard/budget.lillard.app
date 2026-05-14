@@ -646,6 +646,36 @@ function plaid_delete_unmatched_transaction(PDO $pdo, string $owner, int $plaidT
     ];
 }
 
+function plaid_match_method_was_linked(?string $matchMethod): bool
+{
+    $matchMethod = strtolower(trim((string)$matchMethod));
+    return $matchMethod === 'created'
+        || $matchMethod === 'manual_merge'
+        || str_starts_with($matchMethod, 'amount_');
+}
+
+function plaid_mark_budget_transaction_deleted(PDO $pdo, string $owner, int $budgetTransactionId): int
+{
+    if ($budgetTransactionId <= 0) {
+        return 0;
+    }
+    plaid_ensure_tables($pdo);
+    $owner = budget_canonical_user($owner);
+    $stmt = $pdo->prepare(
+        'UPDATE plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         SET pt.removed = 1,
+             pt.budget_transaction_id = NULL,
+             pt.match_method = "manual_delete",
+             pt.matched_at = NULL
+         WHERE pt.budget_transaction_id = ?
+           AND pi.owner = ?
+           AND pt.removed = 0'
+    );
+    $stmt->execute([$budgetTransactionId, $owner]);
+    return $stmt->rowCount();
+}
+
 function plaid_store_item(PDO $pdo, string $owner, string $environment, array $exchange, array $metadata = []): int
 {
     plaid_ensure_tables($pdo);
@@ -1057,11 +1087,12 @@ function plaid_reprocess_unlinked_transactions(PDO $pdo, string $owner, ?int $pl
         'created' => 0,
         'unmatched' => 0,
         'unmapped' => 0,
+        'ignored' => 0,
     ];
 
     $sql = 'SELECT pt.id, pt.plaid_item_id, pt.plaid_account_id, pt.plaid_transaction_id,
                    pt.date, pt.authorized_date, pt.amount, pt.name, pt.merchant_name,
-                   pa.local_account_id
+                   pt.match_method, pa.local_account_id
             FROM plaid_transactions pt
             JOIN plaid_items pi ON pi.id = pt.plaid_item_id
             JOIN plaid_accounts pa
@@ -1092,6 +1123,20 @@ function plaid_reprocess_unlinked_transactions(PDO $pdo, string $owner, ?int $pl
     );
 
     foreach ($rows->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        $previousMatchMethod = strtolower(trim((string)($row['match_method'] ?? '')));
+        if ($previousMatchMethod === 'manual_delete' || plaid_match_method_was_linked($previousMatchMethod)) {
+            $update->execute([
+                ':budget_transaction_id' => null,
+                ':match_method' => 'manual_delete',
+                ':matched_at' => null,
+                ':id' => (int)$row['id'],
+            ]);
+            $remove = $pdo->prepare('UPDATE plaid_transactions SET removed = 1 WHERE id = ?');
+            $remove->execute([(int)$row['id']]);
+            $summary['ignored']++;
+            continue;
+        }
+
         $localAccountId = (int)($row['local_account_id'] ?? 0);
         $budgetAmount = plaid_budget_amount_from_plaid_amount($row['amount'] ?? null);
         $description = trim((string)($row['merchant_name'] ?? ''));
@@ -1799,6 +1844,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
         'unmapped' => 0,
         'removed' => 0,
         'reprocessed' => 0,
+        'ignored' => 0,
         'transfers' => 0,
         'pages' => 0,
     ];
@@ -1853,6 +1899,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
         $summary['created'] += (int)$reprocessed['created'];
         $summary['unmatched'] += (int)$reprocessed['unmatched'];
         $summary['unmapped'] += (int)$reprocessed['unmapped'];
+        $summary['ignored'] += (int)$reprocessed['ignored'];
         $summary['reprocessed'] = array_sum($reprocessed);
         $summary['transfers'] = plaid_reconcile_recent_transfer_pairs($pdo, (string)$item['owner']);
 
