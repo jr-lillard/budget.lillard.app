@@ -979,7 +979,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 	              <div class="card mb-3 shadow-sm">
 	                <div class="card-body">
 	                  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-	                    <h3 class="h6 mb-0">Unmatched Plaid Transactions</h3>
+	                    <h3 class="h6 mb-0">Plaid Transactions to Review</h3>
 	                  </div>
 	                  <div class="table-responsive">
 	                    <table class="table table-sm align-middle mb-0">
