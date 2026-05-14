@@ -375,7 +375,7 @@ function plaid_fetch_unmatched_review(PDO $pdo, string $owner, int $limit = 25):
          LEFT JOIN accounts a ON a.id = pa.local_account_id
          WHERE pi.owner = :owner
            AND pt.removed = 0
-           AND (pt.budget_transaction_id IS NULL OR pt.match_method = "created")
+           AND pt.budget_transaction_id IS NULL
            AND pa.local_account_id IS NOT NULL
          ORDER BY COALESCE(pt.date, pt.authorized_date) DESC, pt.id DESC
          LIMIT ' . $limit
