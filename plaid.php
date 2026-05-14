@@ -676,6 +676,107 @@ function plaid_mark_budget_transaction_deleted(PDO $pdo, string $owner, int $bud
     return $stmt->rowCount();
 }
 
+function plaid_merge_budget_transactions(PDO $pdo, string $owner, int $keepTransactionId, int $dropTransactionId): array
+{
+    if ($keepTransactionId <= 0 || $dropTransactionId <= 0 || $keepTransactionId === $dropTransactionId) {
+        throw new RuntimeException('Select two different transactions to merge.');
+    }
+    plaid_ensure_tables($pdo);
+    $owner = budget_canonical_user($owner);
+    $startedTransaction = !$pdo->inTransaction();
+    if ($startedTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT id, account_id, `date`, amount, description, status, posted, fm_pk
+             FROM transactions
+             WHERE owner = ?
+               AND id IN (?, ?)
+             FOR UPDATE'
+        );
+        $stmt->execute([$owner, $keepTransactionId, $dropTransactionId]);
+        $rows = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $rows[(int)$row['id']] = $row;
+        }
+        if (!isset($rows[$keepTransactionId], $rows[$dropTransactionId])) {
+            throw new RuntimeException('Both transactions must exist.');
+        }
+
+        $keep = $rows[$keepTransactionId];
+        $drop = $rows[$dropTransactionId];
+        if ((int)($keep['account_id'] ?? 0) !== (int)($drop['account_id'] ?? 0)) {
+            throw new RuntimeException('Transactions must belong to the same account.');
+        }
+
+        $keepFmPk = trim((string)($keep['fm_pk'] ?? ''));
+        $dropFmPk = trim((string)($drop['fm_pk'] ?? ''));
+        $keepHasPrivacyToken = $keepFmPk !== '' && !str_starts_with($keepFmPk, 'plaid:');
+        $dropHasPrivacyToken = $dropFmPk !== '' && !str_starts_with($dropFmPk, 'plaid:');
+        if ($keepHasPrivacyToken && $dropHasPrivacyToken && strcasecmp($keepFmPk, $dropFmPk) !== 0) {
+            throw new RuntimeException('Both transactions have different Privacy links.');
+        }
+
+        $fmPkChanged = false;
+        if (!$keepHasPrivacyToken && $dropHasPrivacyToken) {
+            $updateFmPk = $pdo->prepare(
+                'UPDATE transactions
+                 SET fm_pk = :fm_pk,
+                     updated_at_source = NOW()
+                 WHERE id = :id
+                   AND owner = :owner'
+            );
+            $updateFmPk->execute([
+                ':fm_pk' => $dropFmPk,
+                ':id' => $keepTransactionId,
+                ':owner' => $owner,
+            ]);
+            $fmPkChanged = $updateFmPk->rowCount() > 0;
+        }
+
+        $movePlaid = $pdo->prepare(
+            'UPDATE plaid_transactions pt
+             JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+             SET pt.budget_transaction_id = :keep_id,
+                 pt.match_method = "manual_merge",
+                 pt.matched_at = UTC_TIMESTAMP()
+             WHERE pt.budget_transaction_id = :drop_id
+               AND pi.owner = :owner
+               AND pt.removed = 0'
+        );
+        $movePlaid->execute([
+            ':keep_id' => $keepTransactionId,
+            ':drop_id' => $dropTransactionId,
+            ':owner' => $owner,
+        ]);
+        $plaidLinksMoved = $movePlaid->rowCount();
+
+        $delete = $pdo->prepare('DELETE FROM transactions WHERE id = ? AND owner = ? LIMIT 1');
+        $delete->execute([$dropTransactionId, $owner]);
+        if ($delete->rowCount() !== 1) {
+            throw new RuntimeException('Unable to delete duplicate transaction.');
+        }
+
+        if ($startedTransaction) {
+            $pdo->commit();
+        }
+
+        return [
+            'keep_transaction_id' => $keepTransactionId,
+            'deleted_transaction_id' => $dropTransactionId,
+            'plaid_links_moved' => $plaidLinksMoved,
+            'privacy_link_moved' => $fmPkChanged,
+        ];
+    } catch (Throwable $e) {
+        if ($startedTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
 function plaid_store_item(PDO $pdo, string $owner, string $environment, array $exchange, array $metadata = []): int
 {
     plaid_ensure_tables($pdo);

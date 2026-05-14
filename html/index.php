@@ -866,6 +866,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                 data-account-id="<?= (int)($filterAccountId ?? 0) ?>">
                 Transfer
               </button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="mergeTxBtn" disabled>
+                Merge
+              </button>
               <a class="btn btn-sm btn-outline-secondary" href="reminders.php<?= ($filterAccountId>0? ('?account_id='.(int)$filterAccountId) : '') ?>">Reminders</a>
               <a class="btn btn-sm btn-outline-secondary" href="payments.php">Payments</a>
               <a class="btn btn-sm btn-outline-secondary" href="transactions.php">All transactions</a>
@@ -1216,7 +1219,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
-                          <div class="dropdown">
+                          <input class="form-check-input tx-merge-check me-2" type="checkbox" aria-label="Select transaction for merge">
+                          <div class="dropdown d-inline-block">
                             <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
                               <i class="bi bi-three-dots"></i>
                             </button>
@@ -1309,7 +1313,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                         <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                         <td class="text-end">
-                          <div class="dropdown">
+                          <input class="form-check-input tx-merge-check me-2" type="checkbox" aria-label="Select transaction for merge">
+                          <div class="dropdown d-inline-block">
                             <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
                               <i class="bi bi-three-dots"></i>
                             </button>
@@ -1410,7 +1415,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                       <td class="<?= $recentPlaidCellClass ?>" role="button"><?= $plaidStatusCell ?></td>
                       <td class="text-end <?= $amtClass ?> tx-click-edit" role="button"><?= $amtFmt ?></td>
                       <td class="text-end">
-                        <div class="dropdown">
+                        <input class="form-check-input tx-merge-check me-2" type="checkbox" aria-label="Select transaction for merge">
+                        <div class="dropdown d-inline-block">
                           <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
                             <i class="bi bi-three-dots"></i>
                           </button>
@@ -1677,6 +1683,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           </form>
         </div>
       </div>
+      <!-- Merge Transactions Modal -->
+      <div class="modal fade" id="mergeTxModal" tabindex="-1" aria-hidden="true" aria-labelledby="mergeTxLabel">
+        <div class="modal-dialog">
+          <form class="modal-content" id="mergeTxForm">
+            <div class="modal-header">
+              <h5 class="modal-title" id="mergeTxLabel">Merge Transactions</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <input type="hidden" name="keep_id" id="mergeKeepId">
+              <input type="hidden" name="drop_id" id="mergeDropId">
+              <div class="list-group" id="mergeTxChoices"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Merge</button>
+            </div>
+          </form>
+        </div>
+      </div>
       <!-- Client Payment Modal -->
       <div class="modal fade" id="clientPaymentModal" tabindex="-1" aria-hidden="true" aria-labelledby="clientPaymentLabel">
         <div class="modal-dialog">
@@ -1802,6 +1828,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
         const clientPaymentModalEl = document.getElementById('clientPaymentModal');
         const clientPaymentModal = clientPaymentModalEl ? new bootstrap.Modal(clientPaymentModalEl) : null;
         const clientPaymentForm = document.getElementById('clientPaymentForm');
+        const mergeTxModalEl = document.getElementById('mergeTxModal');
+        const mergeTxModal = mergeTxModalEl ? new bootstrap.Modal(mergeTxModalEl) : null;
+        const mergeTxForm = document.getElementById('mergeTxForm');
+        const mergeTxChoices = document.getElementById('mergeTxChoices');
+        const mergeTxBtn = document.getElementById('mergeTxBtn');
         const g = (id) => document.getElementById(id);
         const setv = (id, v) => { const el = g(id); if (el) el.value = v || ''; };
         const dashboardFilterForm = document.getElementById('dashboardFilterForm');
@@ -2146,6 +2177,99 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           }
           clientPaymentModal && clientPaymentModal.show();
         }
+        const selectedMergeRows = () => Array.from(document.querySelectorAll('.tx-merge-check:checked'))
+          .map((input) => input.closest('tr'))
+          .filter(Boolean);
+        const updateMergeButton = () => {
+          const count = selectedMergeRows().length;
+          if (mergeTxBtn) {
+            mergeTxBtn.disabled = count !== 2;
+            mergeTxBtn.textContent = count > 0 ? `Merge (${count})` : 'Merge';
+          }
+        };
+        const rowHasPrivacy = (row) => [
+          row?.dataset?.privacyToken || '',
+          row?.dataset?.privacyStatus || '',
+          row?.dataset?.privacySyncStatus || '',
+        ].some((value) => value.trim() !== '');
+        const rowHasPlaid = (row) => {
+          const plaidId = row?.dataset?.plaidTransactionRowId || '';
+          return plaidId !== '' && plaidId !== '0';
+        };
+        const rowMergeScore = (row) => {
+          let score = 0;
+          if (rowHasPrivacy(row)) score += 100;
+          if ((row?.dataset?.status || '') === '2') score += 40;
+          if (rowHasPlaid(row)) score += 10;
+          if ((row?.dataset?.plaidMatchMethod || '') === 'created') score -= 20;
+          if ((row?.dataset?.status || '') === '0') score -= 5;
+          return score;
+        };
+        const statusLabel = (status) => {
+          if (status === '0') return 'Scheduled';
+          if (status === '2') return 'Posted';
+          return 'Pending';
+        };
+        const formatMergeAmount = (value) => {
+          const amount = parseCurrencyValue(value || '');
+          return Number.isFinite(amount) ? amount.toFixed(2) : (value || '');
+        };
+        const setMergeKeep = (rows, keepId) => {
+          const keep = rows.find((row) => row.dataset.id === keepId);
+          const drop = rows.find((row) => row.dataset.id !== keepId);
+          setv('mergeKeepId', keep?.dataset?.id || '');
+          setv('mergeDropId', drop?.dataset?.id || '');
+        };
+        const appendMergeBadge = (container, text, className) => {
+          const badge = document.createElement('span');
+          badge.className = `badge ${className} ms-1`;
+          badge.textContent = text;
+          container.append(badge);
+        };
+        const renderMergeChoices = (rows) => {
+          if (!mergeTxChoices || rows.length !== 2) return;
+          mergeTxChoices.textContent = '';
+          const defaultKeep = rows.slice().sort((a, b) => rowMergeScore(b) - rowMergeScore(a))[0];
+          setMergeKeep(rows, defaultKeep.dataset.id || '');
+          rows.forEach((row) => {
+            const id = row.dataset.id || '';
+            const label = document.createElement('label');
+            label.className = 'list-group-item list-group-item-action';
+
+            const top = document.createElement('div');
+            top.className = 'd-flex align-items-center gap-2';
+
+            const radio = document.createElement('input');
+            radio.className = 'form-check-input m-0';
+            radio.type = 'radio';
+            radio.name = 'merge_keep_choice';
+            radio.value = id;
+            radio.checked = id === (defaultKeep.dataset.id || '');
+            radio.addEventListener('change', () => setMergeKeep(rows, id));
+            top.append(radio);
+
+            const title = document.createElement('div');
+            title.className = 'fw-semibold';
+            title.textContent = `${row.dataset.date || ''} | ${row.dataset.description || ''} | ${formatMergeAmount(row.dataset.amount || '')}`;
+            top.append(title);
+            label.append(top);
+
+            const detail = document.createElement('div');
+            detail.className = 'small text-body-secondary mt-1 ms-4';
+            detail.textContent = `${row.dataset.account || ''} | ${statusLabel(row.dataset.status || '')}`;
+            if (rowHasPrivacy(row)) appendMergeBadge(detail, 'Privacy', 'text-bg-info');
+            if (rowHasPlaid(row)) appendMergeBadge(detail, 'Plaid', 'text-bg-secondary');
+            label.append(detail);
+
+            mergeTxChoices.append(label);
+          });
+        };
+        const openMergeModal = () => {
+          const rows = selectedMergeRows();
+          if (rows.length !== 2) return;
+          renderMergeChoices(rows);
+          mergeTxModal && mergeTxModal.show();
+        };
         // Use custom suggestion lists instead of native select/datalist to avoid iPad text-entry issues.
         attachSuggestionInput({
           input: txAccountInput,
@@ -2212,6 +2336,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (!row) return;
           e.preventDefault();
           openClientPaymentFromRow(row);
+        });
+        document.addEventListener('change', (e) => {
+          const input = e.target.closest('.tx-merge-check');
+          if (!input) return;
+          const selected = selectedMergeRows();
+          if (selected.length > 2) {
+            input.checked = false;
+            window.alert('Select exactly two transactions to merge.');
+            updateMergeButton();
+            return;
+          }
+          const row = input.closest('tr');
+          row && row.classList.toggle('table-info', input.checked);
+          updateMergeButton();
+        });
+        mergeTxBtn && mergeTxBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          openMergeModal();
         });
         // Add new transaction
         const addBtn = document.getElementById('addTxBtn');
@@ -2412,6 +2554,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (!res.ok) return; // api_error.js will show modal
           try { await res.json(); } catch {}
           modal && modal.hide();
+          window.location.reload();
+        });
+        mergeTxForm && mergeTxForm.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          const keepId = g('mergeKeepId')?.value || '';
+          const dropId = g('mergeDropId')?.value || '';
+          if (!keepId || !dropId || keepId === dropId) {
+            window.alert('Select which transaction to keep.');
+            return;
+          }
+          const fd = new FormData();
+          fd.append('keep_id', keepId);
+          fd.append('drop_id', dropId);
+          const res = await fetch('transaction_merge.php', { method: 'POST', body: fd });
+          if (!res.ok) return; // api_error.js will show modal
+          try { await res.json(); } catch {}
+          mergeTxModal && mergeTxModal.hide();
           window.location.reload();
         });
         clientPaymentForm && clientPaymentForm.addEventListener('submit', async (ev) => {
