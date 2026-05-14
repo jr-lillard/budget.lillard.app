@@ -847,6 +847,205 @@ function plaid_transaction_description(array $tx): string
     return $name !== '' ? $name : 'Plaid transaction';
 }
 
+function plaid_transaction_is_transfer_like(?string $rawJson, string $name = '', string $merchantName = ''): bool
+{
+    $rawJson = trim((string)$rawJson);
+    if ($rawJson !== '') {
+        $decoded = json_decode($rawJson, true);
+        if (is_array($decoded)) {
+            $pfc = $decoded['personal_finance_category'] ?? null;
+            if (is_array($pfc)) {
+                $primary = strtoupper(trim((string)($pfc['primary'] ?? '')));
+                $detailed = strtoupper(trim((string)($pfc['detailed'] ?? '')));
+                if (str_starts_with($primary, 'TRANSFER') || str_starts_with($detailed, 'TRANSFER')) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    $text = plaid_text_key($name . ' ' . $merchantName);
+    return str_contains($text, 'person pay')
+        || (str_contains($text, 'payment center') && (str_contains($text, 'withdrawal') || str_contains($text, 'deposit')));
+}
+
+function plaid_reconcile_transfer_pair_for_transaction(PDO $pdo, string $owner, int $plaidTransactionRowId): bool
+{
+    if ($plaidTransactionRowId <= 0) {
+        return false;
+    }
+    $owner = budget_canonical_user($owner);
+
+    $stmt = $pdo->prepare(
+        'SELECT pt.id, pt.amount, pt.date, pt.authorized_date, pt.name, pt.merchant_name, pt.raw_json,
+                pt.budget_transaction_id, pt.match_method,
+                pa.local_account_id,
+                a.name AS local_account_name,
+                t.fm_pk AS budget_fm_pk
+         FROM plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         JOIN plaid_accounts pa
+           ON pa.plaid_item_id = pt.plaid_item_id
+          AND pa.plaid_account_id = pt.plaid_account_id
+         LEFT JOIN accounts a ON a.id = pa.local_account_id
+         LEFT JOIN transactions t ON t.id = pt.budget_transaction_id AND t.owner = pi.owner
+         WHERE pt.id = ?
+           AND pi.owner = ?
+           AND pt.removed = 0
+         LIMIT 1'
+    );
+    $stmt->execute([$plaidTransactionRowId, $owner]);
+    $current = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($current)) {
+        return false;
+    }
+
+    $budgetTransactionId = (int)($current['budget_transaction_id'] ?? 0);
+    $localAccountId = (int)($current['local_account_id'] ?? 0);
+    $localAccountName = trim((string)($current['local_account_name'] ?? ''));
+    $matchMethod = trim((string)($current['match_method'] ?? ''));
+    $budgetFmPk = trim((string)($current['budget_fm_pk'] ?? ''));
+    if ($budgetTransactionId <= 0
+        || $localAccountId <= 0
+        || $localAccountName === ''
+        || $matchMethod !== 'created'
+        || !str_starts_with($budgetFmPk, 'plaid:')
+        || !is_numeric($current['amount'] ?? null)
+        || !plaid_transaction_is_transfer_like(
+            (string)($current['raw_json'] ?? ''),
+            (string)($current['name'] ?? ''),
+            (string)($current['merchant_name'] ?? '')
+        )) {
+        return false;
+    }
+
+    $date = plaid_valid_date((string)($current['date'] ?? ''))
+        ?? plaid_valid_date((string)($current['authorized_date'] ?? ''));
+    if ($date === null) {
+        return false;
+    }
+    [$startDate, $endDate] = plaid_date_range($date, 3);
+    $amount = (string)$current['amount'];
+
+    $candidateStmt = $pdo->prepare(
+        'SELECT pt.id, pt.amount, pt.date, pt.authorized_date, pt.name, pt.merchant_name, pt.raw_json,
+                pt.budget_transaction_id,
+                pa.local_account_id,
+                a.name AS local_account_name,
+                t.fm_pk AS budget_fm_pk
+         FROM plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         JOIN plaid_accounts pa
+           ON pa.plaid_item_id = pt.plaid_item_id
+          AND pa.plaid_account_id = pt.plaid_account_id
+         JOIN accounts a ON a.id = pa.local_account_id
+         JOIN transactions t ON t.id = pt.budget_transaction_id AND t.owner = pi.owner
+         WHERE pi.owner = :owner
+           AND pt.removed = 0
+           AND pt.id <> :id
+           AND pt.match_method = "created"
+           AND pt.budget_transaction_id IS NOT NULL
+           AND pa.local_account_id IS NOT NULL
+           AND pa.local_account_id <> :local_account_id
+           AND t.fm_pk LIKE "plaid:%"
+           AND ABS(pt.amount + :amount) < 0.01
+           AND COALESCE(pt.date, pt.authorized_date) BETWEEN :start_date AND :end_date
+         ORDER BY ABS(DATEDIFF(COALESCE(pt.date, pt.authorized_date), :target_date)) ASC, pt.id DESC
+         LIMIT 10'
+    );
+    $candidateStmt->execute([
+        ':owner' => $owner,
+        ':id' => $plaidTransactionRowId,
+        ':local_account_id' => $localAccountId,
+        ':amount' => $amount,
+        ':start_date' => $startDate,
+        ':end_date' => $endDate,
+        ':target_date' => $date,
+    ]);
+    $candidates = array_values(array_filter(
+        $candidateStmt->fetchAll(PDO::FETCH_ASSOC) ?: [],
+        static function (array $candidate): bool {
+            return trim((string)($candidate['local_account_name'] ?? '')) !== ''
+                && plaid_transaction_is_transfer_like(
+                    (string)($candidate['raw_json'] ?? ''),
+                    (string)($candidate['name'] ?? ''),
+                    (string)($candidate['merchant_name'] ?? '')
+                );
+        }
+    ));
+    if (count($candidates) !== 1) {
+        return false;
+    }
+
+    $counterpart = $candidates[0];
+    $counterpartBudgetTransactionId = (int)($counterpart['budget_transaction_id'] ?? 0);
+    $counterpartAccountName = trim((string)($counterpart['local_account_name'] ?? ''));
+    if ($counterpartBudgetTransactionId <= 0 || $counterpartAccountName === '') {
+        return false;
+    }
+
+    $update = $pdo->prepare(
+        'UPDATE transactions
+         SET description = :description,
+             updated_at_source = NOW()
+         WHERE id = :id
+           AND owner = :owner
+           AND (description IS NULL OR description <> :description_match)'
+    );
+    $update->execute([
+        ':description' => $counterpartAccountName,
+        ':description_match' => $counterpartAccountName,
+        ':id' => $budgetTransactionId,
+        ':owner' => $owner,
+    ]);
+    $changed = $update->rowCount() > 0;
+    $update->execute([
+        ':description' => $localAccountName,
+        ':description_match' => $localAccountName,
+        ':id' => $counterpartBudgetTransactionId,
+        ':owner' => $owner,
+    ]);
+
+    return $changed || $update->rowCount() > 0;
+}
+
+function plaid_reconcile_recent_transfer_pairs(PDO $pdo, string $owner, int $days = 30): int
+{
+    $owner = budget_canonical_user($owner);
+    $days = max(1, min(90, $days));
+    $relativeStart = gmdate('Y-m-d', strtotime('-' . $days . ' days') ?: time());
+    $cutoff = max($relativeStart, plaid_auto_create_cutoff_date());
+
+    $stmt = $pdo->prepare(
+        'SELECT pt.id
+         FROM plaid_transactions pt
+         JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+         JOIN plaid_accounts pa
+           ON pa.plaid_item_id = pt.plaid_item_id
+          AND pa.plaid_account_id = pt.plaid_account_id
+         WHERE pi.owner = :owner
+           AND pt.removed = 0
+           AND pt.match_method = "created"
+           AND pt.budget_transaction_id IS NOT NULL
+           AND pa.local_account_id IS NOT NULL
+           AND COALESCE(pt.date, pt.authorized_date) >= :cutoff
+         ORDER BY COALESCE(pt.date, pt.authorized_date) DESC, pt.id DESC
+         LIMIT 500'
+    );
+    $stmt->execute([
+        ':owner' => $owner,
+        ':cutoff' => $cutoff,
+    ]);
+
+    $changed = 0;
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) ?: [] as $id) {
+        if (plaid_reconcile_transfer_pair_for_transaction($pdo, $owner, (int)$id)) {
+            $changed++;
+        }
+    }
+    return $changed;
+}
+
 function plaid_valid_date(?string $date): ?string
 {
     $date = trim((string)$date);
@@ -1273,6 +1472,22 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx, bool $autoCr
         ':raw_json' => $rawJson !== false ? $rawJson : null,
     ]);
 
+    $plaidTransactionRowId = is_array($existing) ? (int)($existing['id'] ?? 0) : 0;
+    if ($plaidTransactionRowId <= 0) {
+        $rowStmt = $pdo->prepare(
+            'SELECT id
+             FROM plaid_transactions
+             WHERE plaid_item_id = ?
+               AND plaid_transaction_id = ?
+             LIMIT 1'
+        );
+        $rowStmt->execute([$plaidItemId, $transactionId]);
+        $plaidTransactionRowId = (int)($rowStmt->fetchColumn() ?: 0);
+    }
+    if ($budgetTransactionId !== null && $plaidTransactionRowId > 0) {
+        plaid_reconcile_transfer_pair_for_transaction($pdo, $owner, $plaidTransactionRowId);
+    }
+
     return [
         'stored' => true,
         'matched' => $budgetTransactionId !== null && !$created,
@@ -1298,6 +1513,7 @@ function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidA
         'created' => 0,
         'unmatched' => 0,
         'unmapped' => 0,
+        'transfers' => 0,
     ];
     $localAccountId = (int)($account['local_account_id'] ?? 0);
     if ($localAccountId <= 0) {
@@ -1383,6 +1599,7 @@ function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidA
             $summary['unmatched']++;
         }
     }
+    $summary['transfers'] = plaid_reconcile_recent_transfer_pairs($pdo, $owner);
     return $summary;
 }
 
@@ -1467,6 +1684,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
         'unmatched' => 0,
         'unmapped' => 0,
         'removed' => 0,
+        'transfers' => 0,
         'pages' => 0,
     ];
 
@@ -1514,6 +1732,8 @@ function plaid_sync_item(PDO $pdo, array $item): array
                 throw new RuntimeException('Plaid sync returned too many pages.');
             }
         }
+
+        $summary['transfers'] = plaid_reconcile_recent_transfer_pairs($pdo, (string)$item['owner']);
 
         $stmt = $pdo->prepare(
             'UPDATE plaid_items
