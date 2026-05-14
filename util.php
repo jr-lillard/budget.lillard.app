@@ -386,11 +386,6 @@ function budget_learn_privacy_description_rule_from_transaction(PDO $pdo, string
     ]);
 }
 
-function budget_client_payment_fm_pk(int $sourceTransactionId): string
-{
-    return 'client-payment:' . $sourceTransactionId;
-}
-
 function budget_is_client_account(PDO $pdo, int $accountId): bool
 {
     if ($accountId <= 0) {
@@ -401,19 +396,15 @@ function budget_is_client_account(PDO $pdo, int $accountId): bool
     return (int)($stmt->fetchColumn() ?: 0) === 1;
 }
 
-function budget_upsert_linked_client_payment(
+function budget_create_client_payment(
     PDO $pdo,
     string $owner,
-    int $sourceTransactionId,
     int $clientAccountId,
     ?string $date,
     string $amount,
     int $status
 ): ?int {
     $owner = budget_canonical_user($owner);
-    if ($sourceTransactionId <= 0) {
-        throw new RuntimeException('Missing source transaction.');
-    }
     if (!budget_is_client_account($pdo, $clientAccountId)) {
         throw new RuntimeException('Select a client account for the payment.');
     }
@@ -429,27 +420,15 @@ function budget_upsert_linked_client_payment(
     }
     $posted = $status === 2 ? 1 : 0;
     $date = $date !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? $date : null;
-    $fmPk = budget_client_payment_fm_pk($sourceTransactionId);
     $amountText = number_format($paymentAmount, 2, '.', '');
 
     $stmt = $pdo->prepare(
         'INSERT INTO transactions
-            (fm_pk, account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
+            (account_id, `date`, amount, description, check_no, posted, status, owner, created_at_source, updated_at_source)
          VALUES
-            (:fm_pk, :account_id, :date, :amount, "Payment", NULL, :posted, :status, :owner, NOW(), NOW())
-         ON DUPLICATE KEY UPDATE
-            account_id = VALUES(account_id),
-            `date` = VALUES(`date`),
-            amount = VALUES(amount),
-            description = "Payment",
-            check_no = NULL,
-            posted = VALUES(posted),
-            status = VALUES(status),
-            owner = VALUES(owner),
-            updated_at_source = NOW()'
+            (:account_id, :date, :amount, "Payment", NULL, :posted, :status, :owner, NOW(), NOW())'
     );
     $stmt->execute([
-        ':fm_pk' => $fmPk,
         ':account_id' => $clientAccountId,
         ':date' => $date,
         ':amount' => $amountText,
@@ -458,46 +437,8 @@ function budget_upsert_linked_client_payment(
         ':owner' => $owner,
     ]);
 
-    $idStmt = $pdo->prepare('SELECT id FROM transactions WHERE fm_pk = ? AND owner = ? LIMIT 1');
-    $idStmt->execute([$fmPk, $owner]);
-    $id = $idStmt->fetchColumn();
-    return $id !== false ? (int)$id : null;
-}
-
-function budget_delete_linked_client_payment(PDO $pdo, string $owner, int $sourceTransactionId): void
-{
-    if ($sourceTransactionId <= 0) {
-        return;
-    }
-    $stmt = $pdo->prepare('DELETE FROM transactions WHERE fm_pk = ? AND owner = ? LIMIT 1');
-    $stmt->execute([budget_client_payment_fm_pk($sourceTransactionId), budget_canonical_user($owner)]);
-}
-
-function budget_sync_linked_client_payment_status(PDO $pdo, string $owner, int $sourceTransactionId, ?string $date, int $status): void
-{
-    if ($sourceTransactionId <= 0) {
-        return;
-    }
-    if ($status < 0 || $status > 2) {
-        $status = 1;
-    }
-    $posted = $status === 2 ? 1 : 0;
-    $date = $date !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? $date : null;
-    $stmt = $pdo->prepare(
-        'UPDATE transactions
-         SET `date` = :date,
-             posted = :posted,
-             status = :status,
-             updated_at_source = NOW()
-         WHERE fm_pk = :fm_pk AND owner = :owner'
-    );
-    $stmt->execute([
-        ':date' => $date,
-        ':posted' => $posted,
-        ':status' => $status,
-        ':fm_pk' => budget_client_payment_fm_pk($sourceTransactionId),
-        ':owner' => budget_canonical_user($owner),
-    ]);
+    $id = (int)$pdo->lastInsertId();
+    return $id > 0 ? $id : null;
 }
 
 /**

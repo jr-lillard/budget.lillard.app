@@ -571,9 +571,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
 
             $sql = 'SELECT t.id, t.`date`, t.amount, t.description, t.check_no, t.posted, t.status, t.updated_at_source,
                        t.account_id, t.fm_pk, a.name AS account_name, IFNULL(a.is_client, 0) AS account_is_client,
-                       cpt.id AS client_payment_transaction_id,
-                       cpt.account_id AS client_payment_account_id,
-                       cpt.amount AS client_payment_amount,
                        pts.transaction_token AS privacy_token,
                        pts.latest_transaction_status AS privacy_status,
                        pts.latest_event_type AS privacy_event_type,
@@ -599,9 +596,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                        pa.mask AS plaid_account_mask
                     FROM transactions t
                     LEFT JOIN accounts a ON a.id = t.account_id
-                    LEFT JOIN transactions cpt
-                      ON cpt.owner = t.owner
-                     AND cpt.fm_pk = CONCAT("client-payment:", t.id)
                     LEFT JOIN privacy_transaction_sync pts ON pts.transaction_token = t.fm_pk
                     LEFT JOIN (
                         SELECT budget_transaction_id, MIN(id) AS plaid_transaction_row_id, COUNT(*) AS plaid_link_count
@@ -1206,10 +1200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                           data-status="0"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
-                          data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>"
-                          data-client-payment-id="<?= (int)($row['client_payment_transaction_id'] ?? 0) ?>"
-                          data-client-payment-account-id="<?= (int)($row['client_payment_account_id'] ?? 0) ?>"
-                          data-client-payment-amount="<?= htmlspecialchars((string)($row['client_payment_amount'] ?? '')) ?>">
+                          data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
@@ -1298,10 +1289,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                           data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                           data-status="1"
                           data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
-                          data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>"
-                          data-client-payment-id="<?= (int)($row['client_payment_transaction_id'] ?? 0) ?>"
-                          data-client-payment-account-id="<?= (int)($row['client_payment_account_id'] ?? 0) ?>"
-                          data-client-payment-amount="<?= htmlspecialchars((string)($row['client_payment_amount'] ?? '')) ?>">
+                          data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>">
                         <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                         <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                         <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;">&nbsp;<?= htmlspecialchars((string)$desc) ?></td>
@@ -1398,10 +1386,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
                         data-plaid-mask="<?= htmlspecialchars((string)($row['plaid_account_mask'] ?? '')) ?>"
                         data-status="2"
                         data-account-id="<?= (int)($row['account_id'] ?? 0) ?>"
-                        data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>"
-                        data-client-payment-id="<?= (int)($row['client_payment_transaction_id'] ?? 0) ?>"
-                        data-client-payment-account-id="<?= (int)($row['client_payment_account_id'] ?? 0) ?>"
-                        data-client-payment-amount="<?= htmlspecialchars((string)($row['client_payment_amount'] ?? '')) ?>">
+                        data-account-is-client="<?= (int)($row['account_is_client'] ?? 0) ?>">
                       <td class="tx-click-edit" role="button"><?= $dateCell ?></td>
                       <td class="<?= $recentAccountCellClass ?>" role="button"><?= htmlspecialchars((string)$acct) ?></td>
                       <td class="text-truncate tx-click-edit" role="button" style="max-width: 480px;"><?= htmlspecialchars((string)$desc) ?></td>
@@ -2140,14 +2125,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (txClientPaymentAmount) txClientPaymentAmount.value = clientPaymentDefaultAmount();
           syncClientPaymentControls();
         }
-        function prefillClientPaymentFromRow(row){
-          const linkedAccountId = row?.dataset?.clientPaymentAccountId || '';
-          const linkedAmount = row?.dataset?.clientPaymentAmount || '';
-          if (txRecordClientPayment) txRecordClientPayment.checked = linkedAccountId !== '' && linkedAccountId !== '0';
-          if (txClientPaymentAccount) txClientPaymentAccount.value = linkedAccountId !== '0' ? linkedAccountId : '';
-          if (txClientPaymentAmount) txClientPaymentAmount.value = linkedAmount || clientPaymentDefaultAmount();
-          syncClientPaymentControls();
-        }
         // Use custom suggestion lists instead of native select/datalist to avoid iPad text-entry issues.
         attachSuggestionInput({
           input: txAccountInput,
@@ -2197,7 +2174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           setv('txCheck', row.dataset.check || '');
           const statusVal = row.dataset.status ?? '1';
           const statusEl = g('txStatus'); if (statusEl) statusEl.value = statusVal;
-          prefillClientPaymentFromRow(row);
+          resetClientPaymentControls();
           showPrivacyPanelFromRow(row);
           showPlaidPanelFromRow(row);
           syncApiTabs();

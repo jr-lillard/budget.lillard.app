@@ -204,10 +204,9 @@ try {
         $newId = (int)$pdo->lastInsertId();
         $clientPaymentId = null;
         if ($recordClientPayment) {
-            $clientPaymentId = budget_upsert_linked_client_payment(
+            $clientPaymentId = budget_create_client_payment(
                 $pdo,
                 $owner,
-                $newId,
                 $clientPaymentAccountId,
                 $date !== '' ? $date : null,
                 $clientPaymentAmount !== '' ? $clientPaymentAmount : $amount,
@@ -244,17 +243,14 @@ try {
         }
         $clientPaymentId = null;
         if ($recordClientPayment) {
-            $clientPaymentId = budget_upsert_linked_client_payment(
+            $clientPaymentId = budget_create_client_payment(
                 $pdo,
                 $owner,
-                $id,
                 $clientPaymentAccountId,
                 $date !== '' ? $date : null,
                 $clientPaymentAmount !== '' ? $clientPaymentAmount : $amount,
                 $statusVal
             );
-        } else {
-            budget_delete_linked_client_payment($pdo, $owner, $id);
         }
         $pdo->commit();
         try {
