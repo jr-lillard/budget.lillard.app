@@ -190,6 +190,9 @@ function budget_plaid_status_cell_html(array $row): string
     } elseif ($matchMethod === 'manual_merge') {
         $label = 'merged';
         $statusClass = 'plaid-status-manual';
+    } elseif ($matchMethod === 'auto_posted_duplicate') {
+        $label = 'auto merged';
+        $statusClass = 'plaid-status-manual';
     } elseif (str_starts_with($matchMethod, 'amount_')) {
         $label = 'matched';
         $statusClass = 'plaid-status-matched';
@@ -1985,6 +1988,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$loggedIn) {
           if (pending === '1') return 'pending';
           if (matchMethod === 'created') return 'created';
           if (matchMethod === 'manual_merge') return 'merged';
+          if (matchMethod === 'auto_posted_duplicate') return 'auto merged';
           if ((matchMethod || '').startsWith('amount_')) return 'matched';
           return (matchMethod || '').replace(/_/g, ' ') || 'linked';
         };

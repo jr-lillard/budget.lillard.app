@@ -2,6 +2,7 @@
 declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../util.php';
+require_once __DIR__ . '/../plaid.php';
 // Attempt cookie-based auto-login
 try { $pdo = get_mysql_connection(); auth_login_from_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
 header('Content-Type: application/json');
@@ -79,7 +80,14 @@ try {
         echo json_encode(['ok' => false, 'error' => 'Not found']);
         exit;
     }
-    echo json_encode(['ok' => true, 'id' => $id, 'status' => $status]);
+    $plaidDeduplicated = 0;
+    try {
+        $summary = plaid_reconcile_created_scheduled_duplicates($pdo, $owner);
+        $plaidDeduplicated = (int)($summary['merged'] ?? 0);
+    } catch (Throwable $e) {
+        $plaidDeduplicated = 0;
+    }
+    echo json_encode(['ok' => true, 'id' => $id, 'status' => $status, 'plaid_deduplicated' => $plaidDeduplicated]);
 } catch (Throwable $e) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);

@@ -2,9 +2,20 @@
 declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../util.php';
+require_once __DIR__ . '/../plaid.php';
 // Attempt cookie-based auto-login
 try { $pdo = get_mysql_connection(); auth_login_from_cookie($pdo); } catch (Throwable $e) { /* ignore */ }
 header('Content-Type: application/json');
+
+function budget_reconcile_plaid_duplicates_after_transaction_change(PDO $pdo, string $owner): int
+{
+    try {
+        $summary = plaid_reconcile_created_scheduled_duplicates($pdo, $owner);
+        return (int)($summary['merged'] ?? 0);
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
 
 if (!isset($_SESSION['username']) || $_SESSION['username'] === '') {
     http_response_code(401);
@@ -132,8 +143,9 @@ try {
         ]);
         $toTxId = (int)$pdo->lastInsertId();
         $pdo->commit();
+        $plaidDeduplicated = budget_reconcile_plaid_duplicates_after_transaction_change($pdo, $owner);
 
-        echo json_encode(['ok' => true, 'mode' => 'transfer', 'ids' => [$fromTxId, $toTxId]]);
+        echo json_encode(['ok' => true, 'mode' => 'transfer', 'ids' => [$fromTxId, $toTxId], 'plaid_deduplicated' => $plaidDeduplicated]);
         return;
     }
 
@@ -182,7 +194,8 @@ try {
         ]);
         $newId = (int)$pdo->lastInsertId();
         $pdo->commit();
-        echo json_encode(['ok' => true, 'id' => $newId]);
+        $plaidDeduplicated = budget_reconcile_plaid_duplicates_after_transaction_change($pdo, $owner);
+        echo json_encode(['ok' => true, 'id' => $newId, 'plaid_deduplicated' => $plaidDeduplicated]);
     } else {
         $sql = 'UPDATE transactions SET account_id = :account_id, `date` = :date, amount = :amount, description = :description, check_no = :check_no, posted = :posted, status = :status, updated_at_source = NOW()
                 WHERE id = :id AND owner = :owner';
@@ -210,12 +223,13 @@ try {
             }
         }
         $pdo->commit();
+        $plaidDeduplicated = budget_reconcile_plaid_duplicates_after_transaction_change($pdo, $owner);
         try {
             budget_learn_privacy_description_rule_from_transaction($pdo, $owner, $id, $description);
         } catch (Throwable $e) {
             // Don't block manual transaction edits if rule learning fails.
         }
-        echo json_encode(['ok' => true, 'id' => $id]);
+        echo json_encode(['ok' => true, 'id' => $id, 'plaid_deduplicated' => $plaidDeduplicated]);
     }
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

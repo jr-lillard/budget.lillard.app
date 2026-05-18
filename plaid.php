@@ -651,6 +651,7 @@ function plaid_match_method_was_linked(?string $matchMethod): bool
     $matchMethod = strtolower(trim((string)$matchMethod));
     return $matchMethod === 'created'
         || $matchMethod === 'manual_merge'
+        || $matchMethod === 'auto_posted_duplicate'
         || str_starts_with($matchMethod, 'amount_');
 }
 
@@ -1762,6 +1763,197 @@ function plaid_upsert_transaction(PDO $pdo, array $item, array $tx, bool $autoCr
     ];
 }
 
+function plaid_reconcile_created_scheduled_duplicates(PDO $pdo, string $owner, ?int $plaidItemId = null, int $days = 30): array
+{
+    $owner = budget_canonical_user($owner);
+    $days = max(1, min(90, $days));
+    $relativeStart = gmdate('Y-m-d', strtotime('-' . $days . ' days') ?: time());
+    $cutoff = max($relativeStart, plaid_auto_create_cutoff_date());
+    $summary = [
+        'inspected' => 0,
+        'merged' => 0,
+        'ambiguous' => 0,
+        'no_text_match' => 0,
+        'skipped' => 0,
+    ];
+
+    $startedTransaction = !$pdo->inTransaction();
+    if ($startedTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $sql = 'SELECT pt.id AS plaid_transaction_row_id,
+                       pt.budget_transaction_id AS source_transaction_id,
+                       pt.name,
+                       pt.merchant_name,
+                       t.account_id,
+                       t.`date`,
+                       t.amount
+                FROM plaid_transactions pt
+                JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+                JOIN transactions t
+                  ON t.id = pt.budget_transaction_id
+                 AND t.owner = pi.owner
+                WHERE pi.owner = :owner
+                  AND pt.removed = 0
+                  AND pt.match_method = "created"
+                  AND pt.budget_transaction_id IS NOT NULL
+                  AND t.fm_pk LIKE "plaid:%"
+                  AND COALESCE(t.status, 0) = 0
+                  AND COALESCE(t.posted, 0) = 0
+                  AND t.account_id IS NOT NULL
+                  AND t.`date` IS NOT NULL
+                  AND t.amount IS NOT NULL
+                  AND t.`date` >= :cutoff';
+        $params = [
+            ':owner' => $owner,
+            ':cutoff' => $cutoff,
+        ];
+        if ($plaidItemId !== null && $plaidItemId > 0) {
+            $sql .= ' AND pt.plaid_item_id = :plaid_item_id';
+            $params[':plaid_item_id'] = $plaidItemId;
+        }
+        $sql .= ' ORDER BY t.`date` DESC, pt.id DESC LIMIT 500';
+
+        $rows = $pdo->prepare($sql);
+        $rows->execute($params);
+
+        $targetStmt = $pdo->prepare(
+            'SELECT t.id, t.description
+             FROM transactions t
+             LEFT JOIN plaid_transactions linked
+               ON linked.budget_transaction_id = t.id
+              AND linked.removed = 0
+             WHERE t.owner = :owner
+               AND t.account_id = :account_id
+               AND t.`date` = :date
+               AND t.amount = :amount
+               AND t.id <> :source_transaction_id
+               AND (COALESCE(t.status, CASE WHEN COALESCE(t.posted, 0) = 1 THEN 2 ELSE 0 END) = 2
+                    OR COALESCE(t.posted, 0) = 1)
+               AND (t.fm_pk IS NULL OR t.fm_pk = "" OR t.fm_pk NOT LIKE "plaid:%")
+               AND linked.id IS NULL
+             ORDER BY t.id DESC
+             LIMIT 10'
+        );
+        $sourceLinkCountStmt = $pdo->prepare(
+            'SELECT COUNT(*)
+             FROM plaid_transactions
+             WHERE budget_transaction_id = ?
+               AND removed = 0'
+        );
+        $movePlaid = $pdo->prepare(
+            'UPDATE plaid_transactions pt
+             JOIN plaid_items pi ON pi.id = pt.plaid_item_id
+             SET pt.budget_transaction_id = :target_transaction_id,
+                 pt.match_method = "auto_posted_duplicate",
+                 pt.matched_at = UTC_TIMESTAMP()
+             WHERE pt.id = :plaid_transaction_row_id
+               AND pt.budget_transaction_id = :source_transaction_id
+               AND pt.match_method = "created"
+               AND pt.removed = 0
+               AND pi.owner = :owner'
+        );
+        $deleteSource = $pdo->prepare(
+            'DELETE FROM transactions
+             WHERE id = :source_transaction_id
+               AND owner = :owner
+               AND fm_pk LIKE "plaid:%"
+               AND COALESCE(status, 0) = 0
+               AND COALESCE(posted, 0) = 0
+             LIMIT 1'
+        );
+
+        foreach ($rows->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $summary['inspected']++;
+            $sourceTransactionId = (int)($row['source_transaction_id'] ?? 0);
+            $plaidTransactionRowId = (int)($row['plaid_transaction_row_id'] ?? 0);
+            $accountId = (int)($row['account_id'] ?? 0);
+            $date = plaid_valid_date((string)($row['date'] ?? ''));
+            $amount = $row['amount'] ?? null;
+            if ($sourceTransactionId <= 0 || $plaidTransactionRowId <= 0 || $accountId <= 0 || $date === null || !is_numeric($amount)) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $sourceLinkCountStmt->execute([$sourceTransactionId]);
+            if ((int)$sourceLinkCountStmt->fetchColumn() !== 1) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $targetStmt->execute([
+                ':owner' => $owner,
+                ':account_id' => $accountId,
+                ':date' => $date,
+                ':amount' => (string)$amount,
+                ':source_transaction_id' => $sourceTransactionId,
+            ]);
+            $candidates = $targetStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if (count($candidates) < 1) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $plaidDescription = trim((string)($row['merchant_name'] ?? ''));
+            if ($plaidDescription === '') {
+                $plaidDescription = trim((string)($row['name'] ?? ''));
+            }
+            $descriptionMatches = array_values(array_filter(
+                $candidates,
+                static fn(array $candidate): bool => plaid_description_matches($plaidDescription, (string)($candidate['description'] ?? ''))
+            ));
+            if (count($descriptionMatches) < 1) {
+                $summary['no_text_match']++;
+                continue;
+            }
+            if (count($descriptionMatches) > 1) {
+                $summary['ambiguous']++;
+                continue;
+            }
+
+            $targetTransactionId = (int)($descriptionMatches[0]['id'] ?? 0);
+            if ($targetTransactionId <= 0) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $movePlaid->execute([
+                ':target_transaction_id' => $targetTransactionId,
+                ':plaid_transaction_row_id' => $plaidTransactionRowId,
+                ':source_transaction_id' => $sourceTransactionId,
+                ':owner' => $owner,
+            ]);
+            if ($movePlaid->rowCount() !== 1) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $deleteSource->execute([
+                ':source_transaction_id' => $sourceTransactionId,
+                ':owner' => $owner,
+            ]);
+            if ($deleteSource->rowCount() !== 1) {
+                throw new RuntimeException('Unable to delete Plaid-created duplicate transaction.');
+            }
+
+            $summary['merged']++;
+        }
+
+        if ($startedTransaction) {
+            $pdo->commit();
+        }
+    } catch (Throwable $e) {
+        if ($startedTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    return $summary;
+}
+
 function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidAccountRowId): array
 {
     plaid_ensure_tables($pdo);
@@ -1777,6 +1969,7 @@ function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidA
         'created' => 0,
         'unmatched' => 0,
         'unmapped' => 0,
+        'deduplicated' => 0,
         'transfers' => 0,
     ];
     $localAccountId = (int)($account['local_account_id'] ?? 0);
@@ -1863,6 +2056,8 @@ function plaid_rematch_account_transactions(PDO $pdo, string $owner, int $plaidA
             $summary['unmatched']++;
         }
     }
+    $deduplicated = plaid_reconcile_created_scheduled_duplicates($pdo, $owner, (int)$account['plaid_item_id']);
+    $summary['deduplicated'] = (int)$deduplicated['merged'];
     $summary['transfers'] = plaid_reconcile_recent_transfer_pairs($pdo, $owner);
     return $summary;
 }
@@ -1950,6 +2145,7 @@ function plaid_sync_item(PDO $pdo, array $item): array
         'removed' => 0,
         'reprocessed' => 0,
         'ignored' => 0,
+        'deduplicated' => 0,
         'transfers' => 0,
         'pages' => 0,
     ];
@@ -2006,6 +2202,8 @@ function plaid_sync_item(PDO $pdo, array $item): array
         $summary['unmapped'] += (int)$reprocessed['unmapped'];
         $summary['ignored'] += (int)$reprocessed['ignored'];
         $summary['reprocessed'] = array_sum($reprocessed);
+        $deduplicated = plaid_reconcile_created_scheduled_duplicates($pdo, (string)$item['owner'], $itemId);
+        $summary['deduplicated'] = (int)$deduplicated['merged'];
         $summary['transfers'] = plaid_reconcile_recent_transfer_pairs($pdo, (string)$item['owner']);
 
         $stmt = $pdo->prepare(
